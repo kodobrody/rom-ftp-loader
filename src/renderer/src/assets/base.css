@@ -1,0 +1,16 @@
+:root {
+  --text-strong: #eff7f5;
+  --danger: #ff7c6c;
+  --success: #81e0af;
+}
+
+button:focus,
+input:focus,
+textarea:focus,
+select:focus,
+a:focus,
+[tabindex]:focus {
+  outline: 2px solid rgba(166, 214, 106, 0.9);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(166, 214, 106, 0.22);
+}
