@@ -5,7 +5,7 @@
  <img src="./readme/4.png" width="450">
 </p>
 
-This little app is dedicated for HTPC/handheld users that have remote FTP with roms.
+This little app is dedicated for HTPC/handheld users that have remote FTP with roms (tested on bazzite, works great with ES-DE folder structure).
 
 Features:
 
