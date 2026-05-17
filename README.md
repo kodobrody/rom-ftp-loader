@@ -1,85 +1,29 @@
-# games
+<p align="center">
+ <img src="./readme/1.png" width="450">
+ <img src="./readme/2.png" width="450">
+ <img src="./readme/3.png" width="450">
+ <img src="./readme/4.png" width="450">
+</p>
 
-An Electron application with React and TypeScript
+This little app is dedicated for HTPC/handheld users that have remote FTP with roms.
 
-## Recommended IDE Setup
+Features:
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
+1. Connect to FTP share (your own or friend's ;))
+2. Browse it using gamepad (built with keyboardless setups in mind)
+3. Search and view ROMs libraries with covers (you'll need twitch dev account for that)
+4. Download/delete single or multiple ROM files at once
+5. Don't want to type the config? You can provide config file like this:
 
-## Project Setup
-
-### Install
-
-```bash
-$ npm install
 ```
-
-### Development
-
-```bash
-$ npm run dev
-```
-
-### Build
-
-```bash
-# For windows
-$ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
-
-# Linux AppImage only (recommended for Bazzite)
-$ npm run build:linux:appimage
-
-# Linux RPM only
-$ npm run build:linux:rpm
-```
-
-## Bazzite Linux Compatibility
-
-Bazzite is Fedora-based, so the most compatible outputs are:
-
-- AppImage (portable, no install required)
-- RPM (native Fedora package)
-
-Artifacts are generated in `dist/`.
-
-### Run AppImage on Bazzite
-
-```bash
-$ chmod +x dist/games-*-x64.AppImage
-$ ./dist/games-*-x64.AppImage
-```
-
-If AppImage does not run, install `appimage-run` and try again.
-
-### Install RPM on Bazzite
-
-On immutable Fedora variants (including Bazzite), install with rpm-ostree:
-
-```bash
-$ sudo rpm-ostree install dist/games-*.rpm
-$ systemctl reboot
-```
-
-## Linux Build Notes
-
-- AppImage packaging on Windows can fail without symlink permission.
-- RPM packaging requires `fpm` (typically available on Linux build environments, not plain Windows).
-
-Most reliable workflow for Linux artifacts:
-
-1. Build on Linux directly (recommended on Bazzite/Fedora).
-2. Or use a Linux environment (WSL2/container/CI) for Linux packaging.
-
-Example on Bazzite/Fedora:
-
-```bash
-$ npm install
-$ npm run build:linux:appimage
-$ npm run build:linux:rpm
+{
+  "ROMS_DIRECTORY": "C:\\Roms",
+  "FTP_HOSTNAME": "example.com",
+  "FTP_PORT": "21",
+  "FTP_PATH": "/roms",
+  "FTP_USERNAME": "myuser",
+  "FTP_PASSWORD": "mypassword",
+  "TWITCH_CLIENT_ID": "your-twitch-client-id",
+  "TWITCH_CLIENT_SECRET": "your-twitch-client-secret"
+}
 ```
