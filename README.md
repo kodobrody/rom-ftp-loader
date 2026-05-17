@@ -27,3 +27,5 @@ Features:
   "TWITCH_CLIENT_SECRET": "your-twitch-client-secret"
 }
 ```
+
+Feedback and feature requests would be very appreciated :) 
