@@ -12,6 +12,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  IgdbSearchResult,
   LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
@@ -377,6 +378,65 @@ const fetchGameMetadataFromIgdb = async (
       fetchedAt: new Date().toISOString()
     }
   }
+}
+
+const searchIgdbGames = async (
+  config: AppConfig,
+  platformName: string,
+  query: string
+): Promise<IgdbSearchResult[]> => {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) {
+    return []
+  }
+
+  const platformDefinition = getPlatformDefinition(platformName)
+  const escapedSearch = trimmedQuery.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  const platformWhere = platformDefinition.igdbPlatformIds.length
+    ? `where platforms = (${platformDefinition.igdbPlatformIds.join(',')});`
+    : ''
+  const igdbQuery = `fields id,name,cover.url; search "${escapedSearch}"; ${platformWhere} limit 20;`
+
+  const accessToken = await resolveTwitchAccessToken(config)
+
+  if (!fetchFromMain) {
+    throw new Error('Fetch API is unavailable in the Electron main process')
+  }
+
+  const response = await fetchFromMain(IGDB_GAMES_URL, {
+    method: 'POST',
+    headers: {
+      'Client-ID': config.twitchClientId,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json'
+    },
+    body: igdbQuery
+  })
+
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => '')
+    const details = responseBody ? ` - ${responseBody.slice(0, 240)}` : ''
+    throw new Error(`IGDB search failed (${response.status})${details}`)
+  }
+
+  const candidates = (await response.json()) as Array<{
+    id?: number
+    name?: string
+    cover?: { url?: string }
+  }>
+
+  return candidates
+    .filter(
+      (candidate): candidate is { id: number; name: string; cover?: { url?: string } } =>
+        typeof candidate.id === 'number' &&
+        typeof candidate.name === 'string' &&
+        candidate.name.trim().length > 0
+    )
+    .map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+      coverUrl: coverToImageUrl(candidate.cover?.url)
+    }))
 }
 
 const isAllowedRomFile = (fileName: string, extensions: string[]): boolean => {
@@ -950,6 +1010,36 @@ const fetchMetadataForSingleGame = async (
   const nextMetadata = await fetchGameMetadataFromIgdb(config, platformDefinition, romFileName)
   metadataCache.entries[cacheKey] = nextMetadata
 
+  await saveMetadataCache(metadataCache)
+
+  return {
+    romFileName,
+    displayName: nextMetadata.displayName,
+    coverUrl: nextMetadata.coverUrl,
+    cleanedName: nextMetadata.cleanedName,
+    status: nextMetadata.status
+  }
+}
+
+const applyManualMetadataMatch = async (
+  platformName: string,
+  romFileName: string,
+  matchedName: string,
+  matchedCoverUrl: string | null
+): Promise<GameMetadataUpdate> => {
+  const metadataCache = await readMetadataCache()
+  const cacheKey = buildCacheKey(platformName, romFileName)
+  const cleanedName = stripRomDecorators(romFileName) || romFileName.replace(/\.[^.]+$/, '')
+
+  const nextMetadata: RomMetadataCacheEntry = {
+    displayName: matchedName,
+    coverUrl: matchedCoverUrl,
+    cleanedName,
+    status: 'found',
+    fetchedAt: new Date().toISOString()
+  }
+
+  metadataCache.entries[cacheKey] = nextMetadata
   await saveMetadataCache(metadataCache)
 
   return {
@@ -1592,6 +1682,32 @@ ipcMain.handle(
     const config = await readConfigFromDisk()
     assertConfigured(config)
     return fetchMetadataForSingleGame(config, platformName, romFileName, Boolean(forceRefetch))
+  }
+)
+
+ipcMain.handle('metadata:search-games', async (_event, platformName: string, query: string) => {
+  const config = await readConfigFromDisk()
+  assertConfigured(config)
+  return searchIgdbGames(config, platformName, query)
+})
+
+ipcMain.handle(
+  'metadata:manual-match-game',
+  async (
+    _event,
+    platformName: string,
+    romFileName: string,
+    matchedName: string,
+    matchedCoverUrl: string | null
+  ) => {
+    const config = await readConfigFromDisk()
+    assertConfigured(config)
+
+    if (!matchedName.trim()) {
+      throw new Error('Matched name is required.')
+    }
+
+    return applyManualMetadataMatch(platformName, romFileName, matchedName.trim(), matchedCoverUrl)
   }
 )
 

@@ -5,6 +5,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  IgdbSearchResult,
   LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
@@ -38,6 +39,21 @@ const api = {
       platformName,
       romFileName,
       forceRefetch
+    ) as Promise<GameMetadataUpdate>,
+  searchIgdbGames: (platformName: string, query: string) =>
+    ipcRenderer.invoke('metadata:search-games', platformName, query) as Promise<IgdbSearchResult[]>,
+  manualMatchGameMetadata: (
+    platformName: string,
+    romFileName: string,
+    matchedName: string,
+    matchedCoverUrl: string | null
+  ) =>
+    ipcRenderer.invoke(
+      'metadata:manual-match-game',
+      platformName,
+      romFileName,
+      matchedName,
+      matchedCoverUrl
     ) as Promise<GameMetadataUpdate>,
   downloadGames: (platformName: string, games: GameEntry[]) =>
     ipcRenderer.invoke('downloads:start', platformName, games) as Promise<DownloadSnapshot>,

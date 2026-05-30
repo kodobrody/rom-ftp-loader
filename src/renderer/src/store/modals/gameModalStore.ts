@@ -15,7 +15,6 @@ interface GameModalStore {
   directModalGame: GameEntry | null
   modalGame: GameEntry | null
   activeGameQueueItem: DownloadSnapshot['items'][number] | null
-  gameMetadataLoading: boolean
   gameModalRef: React.RefObject<HTMLElement | null>
   setSearchModalEntry: (entry: SearchModalEntry | null) => void
   openGameModalFromEntry: (entry: GameEntry) => void
@@ -25,7 +24,6 @@ interface GameModalStore {
   cancelDownloadFromModal: () => Promise<void>
   downloadGameFromModal: () => Promise<void>
   deleteDownloadedGameFromModal: () => Promise<void>
-  fetchGameMetadataFromModal: () => Promise<void>
 }
 
 export const useGameModalStore = create<GameModalStore>((set, get) => ({
@@ -34,7 +32,6 @@ export const useGameModalStore = create<GameModalStore>((set, get) => ({
   directModalGame: null,
   modalGame: null,
   activeGameQueueItem: null,
-  gameMetadataLoading: false,
   gameModalRef: { current: null },
   setSearchModalEntry: (searchModalEntry) => {
     set({ searchModalEntry, directModalGame: null })
@@ -169,50 +166,6 @@ export const useGameModalStore = create<GameModalStore>((set, get) => ({
       useAppStateStore
         .getState()
         .setErrorMessage(error instanceof Error ? error.message : 'Failed to delete local file.')
-    }
-  },
-  fetchGameMetadataFromModal: async () => {
-    const modalGame = get().modalGame
-    if (!modalGame) {
-      return
-    }
-
-    set({ gameMetadataLoading: true })
-    useAppStateStore.getState().setErrorMessage(null)
-
-    try {
-      const metadata = await window.api.fetchGameMetadata(
-        modalGame.platformSourceName,
-        modalGame.name,
-        true
-      )
-
-      const library = useLibraryStore.getState()
-      const games = library.games.map((game) => {
-        if (game.id !== modalGame.id) {
-          return game
-        }
-
-        return {
-          ...game,
-          displayName: metadata.displayName || game.displayName,
-          cleanedName: metadata.cleanedName || game.cleanedName,
-          coverUrl:
-            typeof metadata.coverUrl === 'string' || metadata.coverUrl === null
-              ? metadata.coverUrl
-              : game.coverUrl,
-          metadataStatus: metadata.status
-        }
-      })
-
-      library.setGames(games)
-      get().refreshDerivedFromStores()
-    } catch (error) {
-      useAppStateStore
-        .getState()
-        .setErrorMessage(error instanceof Error ? error.message : 'Failed to fetch metadata.')
-    } finally {
-      set({ gameMetadataLoading: false })
     }
   }
 }))

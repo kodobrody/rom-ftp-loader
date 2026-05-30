@@ -4,6 +4,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  IgdbSearchResult,
   LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
@@ -31,6 +32,13 @@ declare global {
         platformName: string,
         romFileName: string,
         forceRefetch?: boolean
+      ) => Promise<GameMetadataUpdate>
+      searchIgdbGames: (platformName: string, query: string) => Promise<IgdbSearchResult[]>
+      manualMatchGameMetadata: (
+        platformName: string,
+        romFileName: string,
+        matchedName: string,
+        matchedCoverUrl: string | null
       ) => Promise<GameMetadataUpdate>
       downloadGames: (platformName: string, games: GameEntry[]) => Promise<DownloadSnapshot>
       cancelDownload: (gameId: string) => Promise<DownloadSnapshot>

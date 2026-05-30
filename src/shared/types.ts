@@ -50,6 +50,12 @@ export interface GameMetadataUpdate {
   status: 'found' | 'missing' | 'error'
 }
 
+export interface IgdbSearchResult {
+  id: number
+  name: string
+  coverUrl: string | null
+}
+
 export interface LibraryCacheSnapshot {
   platforms: PlatformSummary[]
   gamesByPlatform: Record<string, GameEntry[]>

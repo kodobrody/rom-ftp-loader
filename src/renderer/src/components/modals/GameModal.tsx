@@ -1,6 +1,17 @@
-import { faDownload, faFile, faImage, faTrashCan, faXmark } from '@fortawesome/free-solid-svg-icons'
+import {
+  faArrowLeft,
+  faDownload,
+  faFile,
+  faImage,
+  faMagnifyingGlass,
+  faTrashCan,
+  faXmark
+} from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Chip, Modal } from '@heroui/react'
+import { useLibraryStore } from '@renderer/store/libraryStore'
+import { useState } from 'react'
+import type { GameMetadataUpdate, IgdbSearchResult } from '../../../../shared/types'
 import { useDeleteConfirmModalStore } from '../../store/modals/deleteConfirmModalStore'
 import { useGameModalStore } from '../../store/modals/gameModalStore'
 import { formatBytes } from '../../utils/formatting'
@@ -198,14 +209,99 @@ export const GameModal = (): React.JSX.Element | null => {
     cancelDownloadFromModal,
     closeGameModal,
     downloadGameFromModal,
-    fetchGameMetadataFromModal,
-    gameMetadataLoading,
     modalGame
   } = useGameModalStore()
   const { openDeleteConfirmModal } = useDeleteConfirmModalStore()
+  const [manualMode, setManualMode] = useState(false)
+  const [manualQuery, setManualQuery] = useState('')
+  const [manualResults, setManualResults] = useState<IgdbSearchResult[]>([])
+  const [manualError, setManualError] = useState<string | null>(null)
+  const [manualSearching, setManualSearching] = useState(false)
+  const [manualApplyingId, setManualApplyingId] = useState<number | null>(null)
+
+  const resetManualState = (): void => {
+    setManualMode(false)
+    setManualQuery('')
+    setManualResults([])
+    setManualError(null)
+    setManualSearching(false)
+    setManualApplyingId(null)
+  }
+
+  const closeModal = (): void => {
+    resetManualState()
+    closeGameModal()
+  }
 
   if (!modalGame) {
     return null
+  }
+
+  const applyMetadataToLibraryGame = (metadata: GameMetadataUpdate): void => {
+    const library = useLibraryStore.getState()
+    const nextGames = library.games.map((game) => {
+      if (game.id !== modalGame.id) {
+        return game
+      }
+
+      return {
+        ...game,
+        displayName: metadata.displayName || game.displayName,
+        cleanedName: metadata.cleanedName || game.cleanedName,
+        coverUrl:
+          typeof metadata.coverUrl === 'string' || metadata.coverUrl === null
+            ? metadata.coverUrl
+            : game.coverUrl,
+        metadataStatus: metadata.status
+      }
+    })
+
+    library.setGames(nextGames)
+    useGameModalStore.getState().refreshDerivedFromStores()
+  }
+
+  const executeManualSearch = async (queryOverride?: string): Promise<void> => {
+    const trimmedQuery = (queryOverride ?? manualQuery).trim()
+
+    if (!trimmedQuery) {
+      setManualResults([])
+      setManualError(null)
+      return
+    }
+
+    setManualSearching(true)
+    setManualError(null)
+
+    try {
+      const results = await window.api.searchIgdbGames(modalGame.platformSourceName, trimmedQuery)
+      setManualResults(results)
+    } catch (error) {
+      setManualError(error instanceof Error ? error.message : 'Failed to search IGDB.')
+      setManualResults([])
+    } finally {
+      setManualSearching(false)
+    }
+  }
+
+  const selectManualMatch = async (result: IgdbSearchResult): Promise<void> => {
+    setManualApplyingId(result.id)
+    setManualError(null)
+
+    try {
+      const metadata = await window.api.manualMatchGameMetadata(
+        modalGame.platformSourceName,
+        modalGame.name,
+        result.name,
+        result.coverUrl
+      )
+
+      applyMetadataToLibraryGame(metadata)
+      resetManualState()
+    } catch (error) {
+      setManualError(error instanceof Error ? error.message : 'Failed to apply manual metadata.')
+    } finally {
+      setManualApplyingId(null)
+    }
   }
 
   const files: ModalFileEntry[] =
@@ -219,91 +315,175 @@ export const GameModal = (): React.JSX.Element | null => {
 
   const infoPills = extractInfoPills(modalGame.name)
   const stackedPills = [`Size: ${formatBytes(modalGame.size)}`, ...infoPills]
+  const isActiveDownload = Boolean(
+    activeGameQueueItem && ['queued', 'downloading'].includes(activeGameQueueItem.status)
+  )
+  const activeDownloadProgress = activeGameQueueItem?.progress ?? 0
+  const activeDownloadStatus = activeGameQueueItem?.status ?? 'queued'
 
   return (
-    <Modal.Backdrop isOpen={Boolean(modalGame)} onOpenChange={closeGameModal}>
+    <Modal.Backdrop isOpen={Boolean(modalGame)} onOpenChange={closeModal}>
       <Modal.Container>
         <Modal.Dialog className="w-full max-w-210">
-          <Modal.Body>
-            <div className="grid gap-4">
-              <div className="grid gap-4 md:grid-cols-[260px_1fr]">
-                <div className="overflow-hidden rounded-xl">
-                  {modalGame.coverUrl ? (
-                    <img
-                      alt={modalGame.displayName}
-                      className="aspect-3/4 h-full w-full object-cover"
-                      src={modalGame.coverUrl}
-                    />
-                  ) : (
-                    <div className="grid aspect-3/4 place-items-center text-sm text-zinc-400">
-                      No cover
-                    </div>
-                  )}
+          <Modal.Body className="p-2">
+            {manualMode ? (
+              <div className="grid gap-4">
+                <div className="flex items-center justify-between gap-3">
+                  <Button
+                    onPress={() => {
+                      setManualMode(false)
+                      setManualError(null)
+                    }}
+                    variant="tertiary"
+                  >
+                    <FontAwesomeIcon icon={faArrowLeft} />
+                    Back to details
+                  </Button>
                 </div>
-                <div className="grid content-start gap-3">
-                  {modalGame.discLabel ? (
-                    <p className="text-sm text-zinc-300">Edition: {modalGame.discLabel}</p>
-                  ) : null}
-                  {stackedPills.length > 0 ? (
-                    <div className="grid justify-items-start gap-2">
-                      {stackedPills.map((pill) => (
-                        <Chip key={pill} size="md" variant="soft">
-                          {pill}
-                        </Chip>
-                      ))}
-                    </div>
-                  ) : null}
 
-                  {activeGameQueueItem &&
-                  ['queued', 'downloading'].includes(activeGameQueueItem.status) ? (
-                    <>
-                      <div className="h-2 w-full max-w-lg overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className="h-full bg-linear-to-r from-blue-400 to-cyan-400 transition-all"
-                          style={{ width: `${activeGameQueueItem.progress}%` }}
-                        />
+                <h2 className="text-left text-2xl font-semibold text-zinc-100">Manual Match</h2>
+
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                  <input
+                    className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-zinc-100 outline-none"
+                    onChange={(event) => setManualQuery(event.target.value)}
+                    placeholder="Search IGDB"
+                    type="text"
+                    value={manualQuery}
+                  />
+                  <Button
+                    isDisabled={!manualQuery.trim() || manualSearching}
+                    onPress={() => {
+                      void executeManualSearch()
+                    }}
+                    variant="primary"
+                  >
+                    <FontAwesomeIcon icon={faMagnifyingGlass} />
+                    {manualSearching ? 'Searching...' : 'Search'}
+                  </Button>
+                </div>
+
+                {manualError ? <p className="text-sm text-red-300">{manualError}</p> : null}
+
+                {manualResults.length > 0 ? (
+                  <div
+                    className={`grid gap-2 pr-1 ${manualResults.length >= 8 ? 'max-h-96 overflow-auto' : 'overflow-visible'}`}
+                  >
+                    {manualResults.map((result) => (
+                      <div
+                        className="grid w-full grid-cols-[56px_1fr_auto] items-center gap-3 rounded-xl bg-white/5 px-3 py-3"
+                        key={result.id}
+                      >
+                        <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-white/10">
+                          {result.coverUrl ? (
+                            <img
+                              alt={result.name}
+                              className="h-full w-full object-cover"
+                              src={result.coverUrl}
+                            />
+                          ) : (
+                            <FontAwesomeIcon icon={faImage} />
+                          )}
+                        </span>
+                        <span className="truncate text-left text-base">{result.name}</span>
+                        <Button
+                          isDisabled={manualApplyingId !== null}
+                          onPress={() => {
+                            void selectManualMatch(result)
+                          }}
+                          size="sm"
+                          variant="primary"
+                        >
+                          Update match
+                        </Button>
                       </div>
-                      <p className="text-sm text-zinc-300">
-                        {activeGameQueueItem.status} {activeGameQueueItem.progress}%
-                      </p>
-                    </>
-                  ) : null}
-                </div>
+                    ))}
+                  </div>
+                ) : manualSearching ? null : (
+                  <p className="text-sm text-zinc-400">No IGDB matches yet. Search to begin.</p>
+                )}
               </div>
+            ) : (
+              <div className="grid gap-4">
+                <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+                  <div className="overflow-hidden rounded-xl">
+                    {modalGame.coverUrl ? (
+                      <img
+                        alt={modalGame.displayName}
+                        className="aspect-3/4 h-full w-full object-cover"
+                        src={modalGame.coverUrl}
+                      />
+                    ) : (
+                      <div className="grid aspect-3/4 place-items-center text-sm text-zinc-400">
+                        No cover
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid content-start gap-3">
+                    {modalGame.discLabel ? (
+                      <p className="text-sm text-zinc-300">Edition: {modalGame.discLabel}</p>
+                    ) : null}
+                    {stackedPills.length > 0 ? (
+                      <div className="grid justify-items-start gap-2">
+                        {stackedPills.map((pill) => (
+                          <Chip key={pill} size="md" variant="soft">
+                            {pill}
+                          </Chip>
+                        ))}
+                      </div>
+                    ) : null}
 
-              <h2 className="text-left text-2xl font-semibold text-zinc-100">
-                {modalGame.displayName}
-              </h2>
+                    {isActiveDownload ? (
+                      <>
+                        <div className="h-2 w-full max-w-lg overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className="h-full bg-linear-to-r from-blue-400 to-cyan-400 transition-all"
+                            style={{ width: `${activeDownloadProgress}%` }}
+                          />
+                        </div>
+                        <p className="text-sm text-zinc-300">
+                          {activeDownloadStatus} {activeDownloadProgress}%
+                        </p>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
 
-              <div className="grid gap-2">
-                <p className="text-sm font-semibold text-zinc-200">Files</p>
+                <h2 className="text-left text-2xl font-semibold text-zinc-100">
+                  {modalGame.displayName}
+                </h2>
+
                 <div className="grid gap-2">
-                  {files.map((file) => (
-                    <div
-                      className="grid grid-cols-[20px_1fr_auto] items-center gap-3 rounded-xl bg-white/5 p-3"
-                      key={file.remotePath}
-                    >
-                      <div className="grid place-items-center text-zinc-300">
-                        <FontAwesomeIcon icon={faFile} />
+                  <p className="text-sm font-semibold text-zinc-200">Files</p>
+                  <div className="grid gap-2">
+                    {files.map((file) => (
+                      <div
+                        className="grid grid-cols-[20px_1fr_auto] items-center gap-3 rounded-xl bg-white/5 p-3"
+                        key={file.remotePath}
+                      >
+                        <div className="grid place-items-center text-zinc-300">
+                          <FontAwesomeIcon icon={faFile} />
+                        </div>
+                        <div className="grid gap-1">
+                          <p className="break-all text-sm font-semibold text-zinc-100">
+                            {file.name}
+                          </p>
+                          <p className="break-all text-xs text-zinc-400">{file.remotePath}</p>
+                        </div>
+                        <div className="grid place-items-center">
+                          <Chip size="sm" variant="soft">
+                            {formatBytes(file.size)}
+                          </Chip>
+                        </div>
                       </div>
-                      <div className="grid gap-1">
-                        <p className="break-all text-sm font-semibold text-zinc-100">{file.name}</p>
-                        <p className="break-all text-xs text-zinc-400">{file.remotePath}</p>
-                      </div>
-                      <div className="grid place-items-center">
-                        <Chip size="sm" variant="soft">
-                          {formatBytes(file.size)}
-                        </Chip>
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </Modal.Body>
           <Modal.Footer>
-            {activeGameQueueItem &&
-            ['queued', 'downloading'].includes(activeGameQueueItem.status) ? (
+            {manualMode ? null : isActiveDownload ? (
               <Button
                 onPress={() => {
                   void cancelDownloadFromModal()
@@ -333,18 +513,32 @@ export const GameModal = (): React.JSX.Element | null => {
                 Delete
               </Button>
             )}
+            {manualMode ? null : (
+              <>
+                <Button
+                  className="font-semibold cursor-pointer"
+                  onPress={() => {
+                    const initialQuery =
+                      modalGame.cleanedName.trim() ||
+                      modalGame.displayName.trim() ||
+                      modalGame.name.replace(/\.[^.]+$/, '').trim()
+
+                    setManualMode(true)
+                    setManualError(null)
+                    setManualResults([])
+                    setManualQuery(initialQuery)
+                    void executeManualSearch(initialQuery)
+                  }}
+                  variant="tertiary"
+                >
+                  <FontAwesomeIcon icon={faMagnifyingGlass} />
+                  Manual Match
+                </Button>
+              </>
+            )}
             <Button
               className="font-semibold cursor-pointer"
-              isDisabled={gameMetadataLoading}
-              onPress={fetchGameMetadataFromModal}
-              variant="tertiary"
-            >
-              <FontAwesomeIcon icon={faImage} />
-              {gameMetadataLoading ? 'Fetching metadata...' : 'Fetch metadata'}
-            </Button>
-            <Button
-              className="font-semibold cursor-pointer"
-              onPress={closeGameModal}
+              onPress={closeModal}
               variant="tertiary"
             >
               <FontAwesomeIcon icon={faXmark} />
