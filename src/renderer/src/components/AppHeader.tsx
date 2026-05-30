@@ -1,6 +1,6 @@
 import { faGear, faRightFromBracket } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Chip } from '@heroui/react'
+import { Button, Chip, ProgressCircle } from '@heroui/react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStateStore } from '../store/appStateStore'
 import { useLibraryStore } from '../store/libraryStore'
@@ -8,7 +8,13 @@ import { useQuitConfirmModalStore } from '../store/modals/quitConfirmModalStore'
 
 export const AppHeader = (): React.JSX.Element | null => {
   const { isConfigured } = useAppStateStore()
-  const { games, selectedPlatform, visiblePlatforms } = useLibraryStore()
+  const {
+    games,
+    metadataFetchInProgress,
+    metadataFetchPlatformSourceName,
+    selectedPlatform,
+    visiblePlatforms
+  } = useLibraryStore()
   const { openQuitConfirmModal } = useQuitConfirmModalStore()
   const location = useLocation()
   const navigate = useNavigate()
@@ -27,6 +33,9 @@ export const AppHeader = (): React.JSX.Element | null => {
           : 'Platforms'
 
   const downloadedGames = games.filter((game) => game.downloaded).length
+  const gamesWithCover = games.filter((game) => Boolean(game.coverUrl)).length
+  const metadataFetchProgress =
+    games.length > 0 ? Math.min(100, Math.round((gamesWithCover / games.length) * 100)) : 0
   const remoteGames = visiblePlatforms.reduce((sum, platform) => sum + platform.remoteGameCount, 0)
   const downloadedPlatformGames = visiblePlatforms.reduce(
     (sum, platform) => sum + platform.downloadedGameCount,
@@ -40,7 +49,27 @@ export const AppHeader = (): React.JSX.Element | null => {
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold text-zinc-100">{title}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold text-zinc-100">{title}</h1>
+          {selectedPlatform &&
+          metadataFetchInProgress &&
+          metadataFetchPlatformSourceName === selectedPlatform.sourceName ? (
+            <Chip color="default" size="md" variant="soft">
+              <ProgressCircle
+                aria-label="Fetching metadata"
+                size="sm"
+                color="default"
+                value={metadataFetchProgress}
+              >
+                <ProgressCircle.Track>
+                  <ProgressCircle.TrackCircle />
+                  <ProgressCircle.FillCircle />
+                </ProgressCircle.Track>
+              </ProgressCircle>
+              <span>Fetching metadata</span>
+            </Chip>
+          ) : null}
+        </div>
         {selectedPlatform ? (
           <div className="mt-3 flex flex-wrap gap-3">
             <Chip color="default" size="md" variant="soft">

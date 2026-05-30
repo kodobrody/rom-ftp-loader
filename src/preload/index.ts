@@ -13,6 +13,7 @@ import type {
 // Custom APIs for renderer
 const api = {
   getConfig: () => ipcRenderer.invoke('app:get-config') as Promise<AppConfig>,
+  resetAppData: () => ipcRenderer.invoke('app:reset-app-data') as Promise<boolean>,
   saveConfig: (config: AppConfig) =>
     ipcRenderer.invoke('app:save-config', config) as Promise<AppConfig>,
   openOnScreenKeyboard: () =>

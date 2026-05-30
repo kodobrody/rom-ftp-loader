@@ -19,7 +19,11 @@ import { useAppStateStore } from '../store/appStateStore'
 import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
 import { useSetupStore } from '../store/setupStore'
 
-export const SetupScreen = (): React.JSX.Element => {
+interface SetupScreenProps {
+  onboardingMode?: boolean
+}
+
+export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React.JSX.Element => {
   const {
     config,
     configFileLoading,
@@ -27,15 +31,17 @@ export const SetupScreen = (): React.JSX.Element => {
     loadConfigFromFile,
     pickDirectory,
     persistConfig,
+    setupReady,
     updateConfig
   } = useSetupStore()
   const { setKeyboardTarget, setShowOnScreenKeyboard } = useKeyboardModalStore()
-  const { setErrorMessage, setInfoMessage } = useAppStateStore()
+  const { setErrorMessage, setInfoMessage, setOnboardingActive } = useAppStateStore()
   const navigate = useNavigate()
   const [showConnectionModal, setShowConnectionModal] = useState(false)
   const [showDeleteConnectionModal, setShowDeleteConnectionModal] = useState(false)
   const [showIgdbModal, setShowIgdbModal] = useState(false)
   const [showDeleteIgdbModal, setShowDeleteIgdbModal] = useState(false)
+  const [showResetAppDataModal, setShowResetAppDataModal] = useState(false)
 
   const ftpParts = useMemo(() => {
     const isHttpService =
@@ -125,6 +131,29 @@ export const SetupScreen = (): React.JSX.Element => {
     }
   }
 
+  const handleResetAppData = async (): Promise<void> => {
+    try {
+      await window.api.resetAppData()
+      updateConfig({
+        romsDirectory: '',
+        twitchClientId: '',
+        twitchAccessToken: '',
+        twitchClientSecret: '',
+        fileServiceType: 'ftp',
+        ftpUrl: '',
+        ftpUsername: '',
+        ftpPassword: '',
+        rommApiToken: '',
+        inputKeyboardMode: 'gamepad'
+      })
+      setErrorMessage(null)
+      setInfoMessage('App data reset. Configure setup again.')
+      setShowResetAppDataModal(false)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to reset app data.')
+    }
+  }
+
   const handleTextInputClick = (event: React.MouseEvent<HTMLInputElement>): void => {
     if (config.inputKeyboardMode !== 'always') {
       return
@@ -134,180 +163,262 @@ export const SetupScreen = (): React.JSX.Element => {
     setShowOnScreenKeyboard(true)
   }
 
-  return (
-    <section className="setup-layout grid gap-4">
-      <div className="grid gap-3">
-        <Button
-          className="justify-self-start gap-2 px-3 text-zinc-300 hover:text-zinc-100"
-          onPress={() => {
-            navigate('/')
-          }}
-          variant="tertiary"
-        >
-          <FontAwesomeIcon className="shrink-0" icon={faArrowLeft} />
-          Back to library
-        </Button>
-        <h1 className="text-3xl font-semibold text-zinc-100">Setup</h1>
+  const handleGetStarted = async (): Promise<void> => {
+    const savedConfig = await persistConfig(
+      { romsDirectory: config.romsDirectory.trim() },
+      { refreshLibrary: true }
+    )
+
+    if (savedConfig && setupReady) {
+      setOnboardingActive(false)
+      navigate('/')
+    }
+  }
+
+  const settingsContent = (
+    <>
+      <div className="grid gap-2">
+        {onboardingMode && (
+          <>
+            <span className="text-2xl font-bold text-zinc-100">Setup your library</span>
+            <span className="text-zinc-400 mb-4">
+              Configure your server and local directory to continue.
+            </span>
+          </>
+        )}
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <span className="text-sm text-zinc-300">Config loader (optional)</span>
+          <Button
+            autoFocus
+            isDisabled={configFileLoading}
+            onPress={() => {
+              void loadConfigFromFile()
+            }}
+            variant="tertiary"
+          >
+            {configFileLoading ? 'Loading...' : 'Load config from file'}
+          </Button>
+        </div>
       </div>
-      <div className="grid gap-4 w-full max-w-5xl mx-auto">
-        <div className="grid gap-2">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-            <span className="text-sm text-zinc-300">Config loader (optional)</span>
-            <Button
-              autoFocus
-              isDisabled={configFileLoading}
-              onPress={() => {
-                void loadConfigFromFile()
+
+      <div className="grid gap-2">
+        <label className="grid gap-1">
+          <span className="text-sm text-zinc-300">Local game path</span>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <Input
+              className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+              onClick={handleTextInputClick}
+              value={config.romsDirectory}
+              onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
+              onBlur={(event) => {
+                const nextPath = event.target.value.trim()
+
+                if (nextPath !== config.romsDirectory) {
+                  void persistConfig({ romsDirectory: nextPath }, { refreshLibrary: true })
+                }
               }}
-              variant="tertiary"
+              placeholder="C:\\Roms"
+            />
+            <Button
+              isDisabled={directoryPicking}
+              onPress={() => {
+                void pickDirectory()
+              }}
+              variant="primary"
             >
-              {configFileLoading ? 'Loading...' : 'Load config from file'}
+              <FontAwesomeIcon icon={faFolder} />
+              {directoryPicking ? 'Picking...' : 'Pick directory'}
             </Button>
           </div>
-        </div>
+        </label>
+      </div>
 
-        <div className="grid gap-2">
-          <label className="grid gap-1">
-            <span className="text-sm text-zinc-300">Local game path</span>
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-              <Input
-                className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                onClick={handleTextInputClick}
-                value={config.romsDirectory}
-                onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
-                onBlur={(event) => {
-                  const nextPath = event.target.value.trim()
-
-                  if (nextPath !== config.romsDirectory) {
-                    void persistConfig({ romsDirectory: nextPath }, { refreshLibrary: true })
-                  }
-                }}
-                placeholder="C:\\Roms"
-              />
+      {!hasConnection ? (
+        <Button
+          className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+          onPress={openConnectionModal}
+          variant="tertiary"
+        >
+          <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+          <span className="text-zinc-400">Add File Service Connection</span>
+        </Button>
+      ) : (
+        <Card className="bg-white/5">
+          <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                <FontAwesomeIcon icon={faServer} />
+              </div>
+              <div className="min-w-0">
+                <strong className="block truncate text-base text-zinc-100">
+                  {ftpParts.hostname}
+                </strong>
+                <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                  {config.fileServiceType}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
               <Button
-                isDisabled={directoryPicking}
-                onPress={() => {
-                  void pickDirectory()
-                }}
-                variant="primary"
+                aria-label="Edit connection"
+                className="px-3"
+                onPress={openConnectionModal}
+                variant="tertiary"
               >
-                <FontAwesomeIcon icon={faFolder} />
-                {directoryPicking ? 'Picking...' : 'Pick directory'}
+                <FontAwesomeIcon icon={faPenToSquare} />
+                Edit
+              </Button>
+              <Button
+                aria-label="Delete connection"
+                className="px-3"
+                onPress={() => {
+                  setShowDeleteConnectionModal(true)
+                }}
+                variant="danger"
+              >
+                <FontAwesomeIcon icon={faTrashCan} />
+                Delete
               </Button>
             </div>
-          </label>
-        </div>
+          </Card.Content>
+        </Card>
+      )}
 
-        {!hasConnection ? (
-          <Button
-            className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
-            onPress={openConnectionModal}
-            variant="tertiary"
-          >
-            <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
-            <span className="text-zinc-400">Add File Service Connection</span>
-          </Button>
-        ) : (
-          <Card className="bg-white/5">
-            <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
-                  <FontAwesomeIcon icon={faServer} />
-                </div>
-                <div className="min-w-0">
-                  <strong className="block truncate text-base text-zinc-100">
-                    {ftpParts.hostname}
-                  </strong>
-                  <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
-                    {config.fileServiceType}
-                  </span>
-                </div>
+      {!hasIgdbConnection ? (
+        <Button
+          className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+          onPress={openIgdbModal}
+          variant="tertiary"
+        >
+          <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+          <span className="text-zinc-400">Add IGDB Connection</span>
+        </Button>
+      ) : (
+        <Card className="bg-white/5">
+          <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                <FontAwesomeIcon icon={faImage} />
               </div>
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  aria-label="Edit connection"
-                  className="px-3"
-                  onPress={openConnectionModal}
-                  variant="tertiary"
-                >
-                  <FontAwesomeIcon icon={faPenToSquare} />
-                  Edit
-                </Button>
-                <Button
-                  aria-label="Delete connection"
-                  className="px-3"
-                  onPress={() => {
-                    setShowDeleteConnectionModal(true)
-                  }}
-                  variant="danger"
-                >
-                  <FontAwesomeIcon icon={faTrashCan} />
-                  Delete
-                </Button>
+              <div className="min-w-0">
+                <strong className="block truncate text-base text-zinc-100">
+                  IGDB (Twitch API)
+                </strong>
               </div>
-            </Card.Content>
-          </Card>
-        )}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                aria-label="Edit IGDB connection"
+                className="px-3"
+                onPress={openIgdbModal}
+                variant="tertiary"
+              >
+                <FontAwesomeIcon icon={faPenToSquare} />
+                Edit
+              </Button>
+              <Button
+                aria-label="Delete IGDB connection"
+                className="px-3"
+                onPress={() => {
+                  setShowDeleteIgdbModal(true)
+                }}
+                variant="danger"
+              >
+                <FontAwesomeIcon icon={faTrashCan} />
+                Delete
+              </Button>
+            </div>
+          </Card.Content>
+        </Card>
+      )}
 
-        {!hasIgdbConnection ? (
-          <Button
-            className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
-            onPress={openIgdbModal}
-            variant="tertiary"
-          >
-            <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
-            <span className="text-zinc-400">Add IGDB Connection</span>
-          </Button>
-        ) : (
-          <Card className="bg-white/5">
-            <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
-                  <FontAwesomeIcon icon={faImage} />
-                </div>
-                <div className="min-w-0">
-                  <strong className="block truncate text-base text-zinc-100">
-                    IGDB (Twitch API)
-                  </strong>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  aria-label="Edit IGDB connection"
-                  className="px-3"
-                  onPress={openIgdbModal}
-                  variant="tertiary"
-                >
-                  <FontAwesomeIcon icon={faPenToSquare} />
-                  Edit
-                </Button>
-                <Button
-                  aria-label="Delete IGDB connection"
-                  className="px-3"
-                  onPress={() => {
-                    setShowDeleteIgdbModal(true)
-                  }}
-                  variant="danger"
-                >
-                  <FontAwesomeIcon icon={faTrashCan} />
-                  Delete
-                </Button>
-              </div>
-            </Card.Content>
-          </Card>
-        )}
-        <div className="flex items-center justify-end">
-          <label className="grid gap-1">
-            <ControllerlessKeyboardModeSelect
-              value={config.inputKeyboardMode}
-              onChange={(mode) => {
-                updateConfig({ inputKeyboardMode: mode })
-                void persistConfig({ inputKeyboardMode: mode })
-              }}
-            />
-          </label>
-        </div>
+      <div className="flex items-center justify-end">
+        <label className="grid gap-1">
+          <ControllerlessKeyboardModeSelect
+            value={config.inputKeyboardMode}
+            onChange={(mode) => {
+              updateConfig({ inputKeyboardMode: mode })
+              void persistConfig({ inputKeyboardMode: mode })
+            }}
+          />
+        </label>
       </div>
+
+      <Card className="bg-red-500/10 border border-red-400/30">
+        <Card.Content className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <div className="min-w-0">
+            <strong className="block text-sm text-red-200">Temporary: Reset App Data</strong>
+            <p className="text-xs text-red-100/80">
+              Deletes config and cached metadata/library data.
+            </p>
+          </div>
+          <Button
+            onPress={() => {
+              setShowResetAppDataModal(true)
+            }}
+            variant="danger"
+          >
+            Reset all app data
+          </Button>
+        </Card.Content>
+      </Card>
+    </>
+  )
+
+  return (
+    <section className="setup-layout grid gap-4">
+      {!onboardingMode ? (
+        <div className="grid gap-3">
+          <Button
+            className="justify-self-start gap-2 px-3 text-zinc-300 hover:text-zinc-100"
+            onPress={() => {
+              navigate('/')
+            }}
+            variant="tertiary"
+          >
+            <FontAwesomeIcon className="shrink-0" icon={faArrowLeft} />
+            Back to library
+          </Button>
+          <h1 className="text-3xl font-semibold text-zinc-100">Setup</h1>
+        </div>
+      ) : null}
+
+      {onboardingMode ? (
+        <div className="grid gap-6 w-full max-w-6xl mx-auto lg:grid-cols-2">
+          <Card className="bg-white/5">
+            <Card.Content className="grid gap-5 p-6 md:p-8 content-center justify-items-center text-center">
+              <div className="grid size-20 place-items-center rounded-full bg-white/10 text-zinc-100">
+                <FontAwesomeIcon className="text-4xl" icon={faServer} />
+              </div>
+              <div className="grid gap-2">
+                <h2 className="text-3xl font-semibold text-zinc-100">Welcome to Romloader</h2>
+                <p className="text-sm text-zinc-300">
+                  Connect to your remote game collection and manage your downloads with ease.
+                </p>
+              </div>
+            </Card.Content>
+          </Card>
+
+          <Card className="bg-white/5">
+            <Card.Content className="grid gap-4 p-4">
+              {settingsContent}
+              <div className="flex justify-end">
+                <Button
+                  isDisabled={!setupReady}
+                  onPress={() => {
+                    void handleGetStarted()
+                  }}
+                  variant="primary"
+                >
+                  Get started
+                </Button>
+              </div>
+            </Card.Content>
+          </Card>
+        </div>
+      ) : (
+        <div className="grid gap-4 w-full max-w-5xl mx-auto">{settingsContent}</div>
+      )}
 
       <SetupConnectionModal isOpen={showConnectionModal} onClose={closeConnectionModal} />
 
@@ -339,6 +450,18 @@ export const SetupScreen = (): React.JSX.Element => {
         }}
         onDelete={() => {
           void handleDeleteIgdbConnection()
+        }}
+      />
+
+      <SetupDeleteConfirmModal
+        isOpen={showResetAppDataModal}
+        title="Reset App Data"
+        description="This will delete config and cached metadata/library data. Continue?"
+        onClose={() => {
+          setShowResetAppDataModal(false)
+        }}
+        onDelete={() => {
+          void handleResetAppData()
         }}
       />
     </section>

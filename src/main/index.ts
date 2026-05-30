@@ -103,6 +103,8 @@ interface RomMetadataCache {
   entries: Record<string, RomMetadataCacheEntry>
 }
 
+const METADATA_MISSING_RETRY_MS = 7 * 24 * 60 * 60 * 1000
+
 interface LibraryCacheFile extends LibraryCacheSnapshot {}
 
 interface IgdbTokenCacheEntry {
@@ -165,6 +167,31 @@ const readMetadataCache = async (): Promise<RomMetadataCache> => {
   } catch {
     return { entries: {} }
   }
+}
+
+const shouldRefreshCachedMetadata = (
+  metadata: RomMetadataCacheEntry | undefined,
+  forceRefetch: boolean
+): boolean => {
+  if (forceRefetch || !metadata) {
+    return true
+  }
+
+  if (metadata.status === 'error') {
+    return true
+  }
+
+  if (metadata.status !== 'missing') {
+    return false
+  }
+
+  const fetchedAtMs = Date.parse(metadata.fetchedAt)
+
+  if (!Number.isFinite(fetchedAtMs)) {
+    return true
+  }
+
+  return Date.now() - fetchedAtMs >= METADATA_MISSING_RETRY_MS
 }
 
 const saveMetadataCache = async (cache: RomMetadataCache): Promise<void> => {
@@ -1356,7 +1383,7 @@ const listGames = async (
       let metadata = metadataCache.entries[cacheKey]
 
       const shouldFetch =
-        fetchMissingMetadata && (forceRefetchMetadata || typeof metadata === 'undefined')
+        fetchMissingMetadata && shouldRefreshCachedMetadata(metadata, forceRefetchMetadata)
 
       if (shouldFetch) {
         metadata = await fetchGameMetadataFromIgdb(config, platformDefinition, primaryEntry.name)
@@ -1449,13 +1476,13 @@ const fetchMetadataForSingleGame = async (
 
   const cachedMetadata = metadataCache.entries[cacheKey]
 
-  if (cachedMetadata && !forceRefetch) {
+  if (!shouldRefreshCachedMetadata(cachedMetadata, forceRefetch)) {
     return {
       romFileName,
-      displayName: cachedMetadata.displayName,
-      coverUrl: cachedMetadata.coverUrl,
-      cleanedName: cachedMetadata.cleanedName,
-      status: cachedMetadata.status
+      displayName: cachedMetadata?.displayName ?? titleCasePlatformName(romFileName),
+      coverUrl: cachedMetadata?.coverUrl ?? null,
+      cleanedName: cachedMetadata?.cleanedName ?? stripRomDecorators(romFileName),
+      status: cachedMetadata?.status ?? 'missing'
     }
   }
 
@@ -1926,6 +1953,30 @@ const startDownloadQueue = (
 }
 
 ipcMain.handle('app:get-config', async () => readConfigFromDisk())
+
+ipcMain.handle('app:reset-app-data', async () => {
+  const resetTargets = [getConfigPath(), getMetadataCachePath(), getLibraryCachePath()]
+
+  await Promise.all(
+    resetTargets.map(async (targetPath) => {
+      try {
+        if (existsSync(targetPath)) {
+          await unlink(targetPath)
+        }
+      } catch {
+        // Ignore individual cleanup failures to keep reset best-effort.
+      }
+    })
+  )
+
+  currentDownloadSnapshot = emptySnapshot()
+  activeDownloadClient = null
+  activeDownloadingGameId = null
+  cancelledGameIds.clear()
+  igdbTokenCache = null
+
+  return true
+})
 
 ipcMain.handle('app:save-config', async (_event, config: Partial<AppConfig>) =>
   saveConfigToDisk(config)

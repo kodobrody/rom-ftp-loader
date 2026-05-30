@@ -14,6 +14,7 @@ declare global {
     electron: ElectronAPI
     api: {
       getConfig: () => Promise<AppConfig>
+      resetAppData: () => Promise<boolean>
       saveConfig: (config: AppConfig) => Promise<AppConfig>
       openOnScreenKeyboard: () => Promise<boolean>
       pickDirectory: () => Promise<string | null>

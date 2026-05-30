@@ -20,6 +20,8 @@ interface LibraryStore {
   selectedPlatform: PlatformSummary | null
   platformsLoading: boolean
   gamesLoading: boolean
+  metadataFetchInProgress: boolean
+  metadataFetchPlatformSourceName: string | null
   showDownloadedOnly: boolean
   selectionMode: boolean
   showPlatformMenu: boolean
@@ -129,6 +131,8 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   selectedPlatform: null,
   platformsLoading: false,
   gamesLoading: false,
+  metadataFetchInProgress: false,
+  metadataFetchPlatformSourceName: null,
   showDownloadedOnly: false,
   selectionMode: false,
   showPlatformMenu: false,
@@ -194,6 +198,8 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       cachedGamesByPlatform: {},
       selectedPlatform: null,
       games: [],
+      metadataFetchInProgress: false,
+      metadataFetchPlatformSourceName: null,
       showDownloadedOnly: false,
       selectedGameIds: [],
       selectionMode: false,
@@ -306,12 +312,12 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
 
     const games = await get().refreshGames(platform.sourceName, { fetchMissingMetadata: false })
 
-    const gamesMissingCover = games.filter((game) => !game.coverUrl)
-    if (gamesMissingCover.length === 0) {
+    const gamesNeedingMetadata = games.filter((game) => game.metadataStatus !== 'found')
+    if (gamesNeedingMetadata.length === 0) {
       return
     }
 
-    const prioritizedGames = [...gamesMissingCover].sort((left, right) => {
+    const prioritizedGames = [...gamesNeedingMetadata].sort((left, right) => {
       if (left.downloaded !== right.downloaded) {
         return left.downloaded ? -1 : 1
       }
@@ -321,30 +327,53 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       return leftName.localeCompare(rightName)
     })
 
-    for (const game of prioritizedGames) {
-      const currentSelectedPlatform = get().selectedPlatform
+    set({ metadataFetchInProgress: true, metadataFetchPlatformSourceName: platform.sourceName })
 
-      if (!currentSelectedPlatform || currentSelectedPlatform.sourceName !== platform.sourceName) {
-        break
-      }
+    try {
+      for (const game of prioritizedGames) {
+        const currentSelectedPlatform = get().selectedPlatform
 
-      try {
-        const metadata = await window.api.fetchGameMetadata(platform.sourceName, game.name)
-        const nextGames = applyMetadataUpdateToGames(
-          get().games,
-          platform.sourceName,
-          metadata.romFileName,
-          metadata
-        )
-        get().setGames(nextGames)
-      } catch {
-        // Keep auto-fetch best-effort; manual actions can retry and surface specific errors.
+        if (
+          !currentSelectedPlatform ||
+          currentSelectedPlatform.sourceName !== platform.sourceName
+        ) {
+          break
+        }
+
+        try {
+          const metadata = await window.api.fetchGameMetadata(platform.sourceName, game.name)
+          const selectedAfterFetch = get().selectedPlatform
+
+          if (!selectedAfterFetch || selectedAfterFetch.sourceName !== platform.sourceName) {
+            break
+          }
+
+          const nextGames = applyMetadataUpdateToGames(
+            get().games,
+            platform.sourceName,
+            metadata.romFileName,
+            metadata
+          )
+          get().setGames(nextGames)
+        } catch {
+          // Keep auto-fetch best-effort; manual actions can retry and surface specific errors.
+        }
       }
+    } finally {
+      const selectedAtEnd = get().selectedPlatform
+      const stillSamePlatform = selectedAtEnd?.sourceName === platform.sourceName
+
+      set({
+        metadataFetchInProgress: false,
+        metadataFetchPlatformSourceName: stillSamePlatform ? platform.sourceName : null
+      })
     }
   },
   backToPlatforms: () => {
     set({
       selectedPlatform: null,
+      metadataFetchInProgress: false,
+      metadataFetchPlatformSourceName: null,
       showPlatformMenu: false,
       selectionMode: false,
       selectedGameIds: []

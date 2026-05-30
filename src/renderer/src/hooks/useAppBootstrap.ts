@@ -41,6 +41,7 @@ export const useAppBootstrap = (): void => {
         const cachedLibrary = await window.api.getLibraryCache()
 
         appState.setIsConfigured(ready)
+        appState.setOnboardingActive(!ready)
 
         if (ready) {
           library.setLibraryCache(cachedLibrary)
