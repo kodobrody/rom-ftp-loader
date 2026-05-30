@@ -1,6 +1,6 @@
 import { faFloppyDisk, faFolder, faServer } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip, Input } from '@heroui/react'
+import { Button, Card, Chip, Input, Label, ListBox, Select } from '@heroui/react'
 import React, { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSetupStore } from '../store/setupStore'
@@ -16,8 +16,38 @@ const normalizePathInput = (pathInput: string): string => {
   return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }
 
-const parseFtpParts = (ftpUrl: string): { hostname: string; port: string; path: string } => {
-  const fallback = { hostname: '', port: '21', path: '/' }
+type ConnectionProtocol = 'ftp' | 'ftps' | 'sftp'
+
+const getDefaultPort = (protocol: ConnectionProtocol): string => {
+  if (protocol === 'sftp') {
+    return '22'
+  }
+
+  if (protocol === 'ftps') {
+    return '990'
+  }
+
+  return '21'
+}
+
+const parseProtocol = (value: string): ConnectionProtocol => {
+  const normalized = value.toLowerCase().replace(':', '')
+
+  if (normalized === 'sftp') {
+    return 'sftp'
+  }
+
+  if (normalized === 'ftps') {
+    return 'ftps'
+  }
+
+  return 'ftp'
+}
+
+const parseFtpParts = (
+  ftpUrl: string
+): { protocol: ConnectionProtocol; hostname: string; port: string; path: string } => {
+  const fallback = { protocol: 'ftp' as const, hostname: '', port: '21', path: '/' }
 
   if (!ftpUrl.trim()) {
     return fallback
@@ -26,40 +56,53 @@ const parseFtpParts = (ftpUrl: string): { hostname: string; port: string; path: 
   try {
     const normalizedUrl = ftpUrl.includes('://') ? ftpUrl : `ftp://${ftpUrl}`
     const parsedUrl = new URL(normalizedUrl)
+    const protocol = parseProtocol(parsedUrl.protocol)
 
     return {
+      protocol,
       hostname: parsedUrl.hostname,
-      port: parsedUrl.port || '21',
+      port: parsedUrl.port || getDefaultPort(protocol),
       path: normalizePathInput(parsedUrl.pathname)
     }
   } catch {
-    const withoutProtocol = ftpUrl.trim().replace(/^ftps?:\/\//i, '')
+    const detectedProtocol = ftpUrl.trim().match(/^(ftp|ftps|sftp):\/\//i)?.[1] || 'ftp'
+    const protocol = parseProtocol(detectedProtocol)
+    const withoutProtocol = ftpUrl.trim().replace(/^(?:ftp|ftps|sftp):\/\//i, '')
     const slashIndex = withoutProtocol.indexOf('/')
     const hostAndPort = slashIndex >= 0 ? withoutProtocol.slice(0, slashIndex) : withoutProtocol
     const path = slashIndex >= 0 ? withoutProtocol.slice(slashIndex) : '/'
     const hostPortMatch = hostAndPort.match(/^(.*?)(?::(\d+))?$/)
 
     return {
+      protocol,
       hostname: (hostPortMatch?.[1] || '').trim(),
-      port: hostPortMatch?.[2] || '21',
+      port: hostPortMatch?.[2] || getDefaultPort(protocol),
       path: normalizePathInput(path)
     }
   }
 }
 
-const buildFtpUrl = (hostnameInput: string, portInput: string, pathInput: string): string => {
-  const hostname = hostnameInput.trim().replace(/^ftps?:\/\//i, '').replace(/\/.*/, '')
+const buildFtpUrl = (
+  protocolInput: ConnectionProtocol,
+  hostnameInput: string,
+  portInput: string,
+  pathInput: string
+): string => {
+  const protocol = parseProtocol(protocolInput)
+  const hostname = hostnameInput.trim().replace(/^(?:ftp|ftps|sftp):\/\//i, '').replace(/\/.*/, '')
 
   if (!hostname) {
     return ''
   }
 
   const parsedPort = Number.parseInt(portInput, 10)
-  const normalizedPort = Number.isFinite(parsedPort) && parsedPort > 0 ? String(parsedPort) : '21'
+  const defaultPort = getDefaultPort(protocol)
+  const normalizedPort =
+    Number.isFinite(parsedPort) && parsedPort > 0 ? String(parsedPort) : defaultPort
   const path = normalizePathInput(pathInput)
-  const portSegment = normalizedPort === '21' ? '' : `:${normalizedPort}`
+  const portSegment = normalizedPort === defaultPort ? '' : `:${normalizedPort}`
 
-  return `ftp://${hostname}${portSegment}${path}`
+  return `${protocol}://${hostname}${portSegment}${path}`
 }
 
 export const SetupScreen = (): React.JSX.Element => {
@@ -94,9 +137,9 @@ export const SetupScreen = (): React.JSX.Element => {
       <Card>
         <Card.Content className="gap-4 p-5 justify-start">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">First screen</p>
-          <h2 className="text-2xl font-semibold text-zinc-100">Point the app at your ROM folder and FTP source</h2>
+          <h2 className="text-2xl font-semibold text-zinc-100">Point the app at your ROM folder and server source</h2>
           <p className="text-sm text-zinc-300">
-            Save the local ROM directory and FTP connection details once. Twitch credentials are
+            Save the local ROM directory and connection details once. Twitch credentials are
             optional and only used for IGDB names and cover art.
           </p>
           <div className="grid gap-3">
@@ -107,9 +150,9 @@ export const SetupScreen = (): React.JSX.Element => {
               <span className="text-sm text-zinc-400">Local files in the selected folder are marked as downloaded.</span>
             </div>
             <div className="grid gap-1 rounded-xl bg-white/5 p-3">
-              <strong className="text-sm text-zinc-100">{config.ftpUrl ? 'FTP ready' : 'FTP missing'}</strong>
+              <strong className="text-sm text-zinc-100">{config.ftpUrl ? 'Server ready' : 'Server missing'}</strong>
               <span className="text-sm text-zinc-400">
-                Use ftp://host/path or ftps://host/path if your ROM root is not the server root.
+                Use ftp://host/path, ftps://host/path, or sftp://host/path if your ROM root is not the server root.
               </span>
             </div>
             <div className="grid gap-1 rounded-xl bg-white/5 p-3">
@@ -165,8 +208,44 @@ export const SetupScreen = (): React.JSX.Element => {
             </section>
 
             <section className="grid gap-3 rounded-xl bg-white/5 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">FTP connection</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Server connection</p>
               <div className="grid gap-3 md:grid-cols-2">
+                <label className="grid gap-1">
+                  <Select
+                    aria-label="Protocol"
+                    className="w-full"
+                    selectedKey={ftpParts.protocol}
+                    onSelectionChange={(value) => {
+                      const nextProtocol = parseProtocol(String(value))
+                      updateConfig({
+                        ftpUrl: buildFtpUrl(nextProtocol, ftpParts.hostname, ftpParts.port, ftpParts.path)
+                      })
+                    }}
+                  >
+                    <Label>Protocol</Label>
+                    <Select.Trigger>
+                      <Select.Value />
+                      <Select.Indicator />
+                    </Select.Trigger>
+                    <Select.Popover>
+                      <ListBox>
+                        <ListBox.Item id="ftp" textValue="FTP">
+                          FTP
+                          <ListBox.ItemIndicator />
+                        </ListBox.Item>
+                        <ListBox.Item id="ftps" textValue="FTPS">
+                          FTPS
+                          <ListBox.ItemIndicator />
+                        </ListBox.Item>
+                        <ListBox.Item id="sftp" textValue="SFTP">
+                          SFTP
+                          <ListBox.ItemIndicator />
+                        </ListBox.Item>
+                      </ListBox>
+                    </Select.Popover>
+                  </Select>
+                </label>
+
                 <label className="grid gap-1">
                   <span className="text-sm text-zinc-300">Hostname</span>
                   <Input
@@ -174,7 +253,7 @@ export const SetupScreen = (): React.JSX.Element => {
                     value={ftpParts.hostname}
                     onChange={(event) => {
                       const rawHostname = event.target.value
-                      const withoutProtocol = rawHostname.trim().replace(/^ftps?:\/\//i, '')
+                      const withoutProtocol = rawHostname.trim().replace(/^(?:ftp|ftps|sftp):\/\//i, '')
                       const slashIndex = withoutProtocol.indexOf('/')
                       const hostPortSegment =
                         slashIndex >= 0 ? withoutProtocol.slice(0, slashIndex) : withoutProtocol
@@ -184,7 +263,9 @@ export const SetupScreen = (): React.JSX.Element => {
                       const hostname = (hostPortMatch?.[1] || '').trim()
                       const port = hostPortMatch?.[2] || ftpParts.port
 
-                      updateConfig({ ftpUrl: buildFtpUrl(hostname, port, pathSegment) })
+                      updateConfig({
+                        ftpUrl: buildFtpUrl(ftpParts.protocol, hostname, port, pathSegment)
+                      })
                     }}
                     placeholder="example.com"
                   />
@@ -198,10 +279,15 @@ export const SetupScreen = (): React.JSX.Element => {
                     onChange={(event) => {
                       const nextPort = event.target.value.replace(/[^\d]/g, '')
                       updateConfig({
-                        ftpUrl: buildFtpUrl(ftpParts.hostname, nextPort || '21', ftpParts.path)
+                        ftpUrl: buildFtpUrl(
+                          ftpParts.protocol,
+                          ftpParts.hostname,
+                          nextPort || getDefaultPort(ftpParts.protocol),
+                          ftpParts.path
+                        )
                       })
                     }}
-                    placeholder="21"
+                    placeholder={getDefaultPort(ftpParts.protocol)}
                   />
                 </label>
 
@@ -212,7 +298,12 @@ export const SetupScreen = (): React.JSX.Element => {
                     value={ftpParts.path}
                     onChange={(event) => {
                       updateConfig({
-                        ftpUrl: buildFtpUrl(ftpParts.hostname, ftpParts.port, event.target.value)
+                        ftpUrl: buildFtpUrl(
+                          ftpParts.protocol,
+                          ftpParts.hostname,
+                          ftpParts.port,
+                          event.target.value
+                        )
                       })
                     }}
                     placeholder="/"
@@ -249,7 +340,7 @@ export const SetupScreen = (): React.JSX.Element => {
                   variant="tertiary"
                 >
                   <FontAwesomeIcon icon={faServer} />
-                  {ftpTesting ? 'Testing...' : 'Test FTP connection'}
+                  {ftpTesting ? 'Testing...' : 'Test connection'}
                 </Button>
               </div>
             </section>
@@ -292,7 +383,7 @@ export const SetupScreen = (): React.JSX.Element => {
               <Chip color={setupReady ? 'success' : 'warning'} size="md" variant="soft">
                 {setupReady
                   ? 'All required fields are present.'
-                  : 'Fill the ROM and FTP fields to continue to the platform grid.'}
+                  : 'Fill the ROM and connection fields to continue to the platform grid.'}
               </Chip>
             </div>
           </form>

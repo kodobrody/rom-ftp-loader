@@ -1,5 +1,6 @@
 {
   "ROMS_DIRECTORY": "C:\\test",
+  "FTP_PROTOCOL": "ftp",
   "FTP_HOSTNAME": "192.168.1.1",
   "FTP_PORT": "21",
   "FTP_PATH": "/",

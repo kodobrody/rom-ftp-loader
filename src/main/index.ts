@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync } from 'fs'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises'
 import { dirname, extname, join, posix } from 'path'
+import SftpClient from 'ssh2-sftp-client'
 import type {
   AppConfig,
   DownloadQueueItem,
@@ -28,9 +29,36 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let currentDownloadSnapshot: DownloadSnapshot = emptySnapshot()
-let activeDownloadClient: Client | null = null
+let activeDownloadClient: RemoteClient | null = null
 let activeDownloadingGameId: string | null = null
 const cancelledGameIds = new Set<string>()
+
+type RemoteProtocol = 'ftp' | 'ftps' | 'sftp'
+
+interface ParsedRemoteLocation {
+  protocol: RemoteProtocol
+  host: string
+  port: number
+  secure: boolean
+  basePath: string
+}
+
+interface RemoteEntry {
+  name: string
+  type: 'file' | 'directory'
+  size: number
+  modifiedAt: Date | null
+}
+
+type DownloadProgressHandler = ((bytes: number) => void) | null
+
+interface RemoteClient {
+  close: () => Promise<void> | void
+  list: (remotePath: string) => Promise<RemoteEntry[]>
+  downloadTo: (localPath: string, remotePath: string) => Promise<void>
+  setDownloadProgressHandler: (handler: DownloadProgressHandler) => void
+  abortActiveTransfer: () => void
+}
 
 export interface PlatformDefinition {
   displayName: string
@@ -457,21 +485,74 @@ const assertConfigured = (config: AppConfig): void => {
   }
 }
 
-const parseFtpLocation = (
-  ftpUrl: string
-): {
-  host: string
-  port: number
-  secure: boolean
-  basePath: string
-} => {
-  const normalizedUrl = ftpUrl.includes('://') ? ftpUrl : `ftp://${ftpUrl}`
+const getDefaultPort = (protocol: RemoteProtocol): number => {
+  if (protocol === 'sftp') {
+    return 22
+  }
+
+  if (protocol === 'ftps') {
+    return 990
+  }
+
+  return 21
+}
+
+const normalizeRemoteProtocol = (value: string): RemoteProtocol => {
+  const normalized = value.toLowerCase().replace(':', '')
+
+  if (normalized === 'sftp') {
+    return 'sftp'
+  }
+
+  if (normalized === 'ftps') {
+    return 'ftps'
+  }
+
+  return 'ftp'
+}
+
+const normalizeRemotePath = (value: string): string => {
+  const trimmed = value.trim()
+
+  if (!trimmed || trimmed === '/') {
+    return '/'
+  }
+
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+const buildConnectionUrl = (
+  protocolInput: unknown,
+  hostnameInput: unknown,
+  portInput: unknown,
+  pathInput: unknown
+): string => {
+  const protocol = normalizeRemoteProtocol(String(protocolInput || 'ftp'))
+  const hostname = String(hostnameInput || '').trim()
+
+  if (!hostname) {
+    return ''
+  }
+
+  const rawPort = String(portInput ?? '').trim()
+  const parsedPort = Number.parseInt(rawPort, 10)
+  const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : getDefaultPort(protocol)
+  const portSegment = port === getDefaultPort(protocol) ? '' : `:${port}`
+  const path = normalizeRemotePath(String(pathInput ?? '/'))
+
+  return `${protocol}://${hostname}${portSegment}${path}`
+}
+
+const parseRemoteLocation = (remoteUrl: string): ParsedRemoteLocation => {
+  const normalizedUrl = remoteUrl.includes('://') ? remoteUrl : `ftp://${remoteUrl}`
   const parsedUrl = new URL(normalizedUrl)
+  const protocolValue = normalizeRemoteProtocol(parsedUrl.protocol)
 
   return {
+    protocol: protocolValue,
     host: parsedUrl.hostname,
-    port: parsedUrl.port ? Number(parsedUrl.port) : parsedUrl.protocol === 'ftps:' ? 990 : 21,
-    secure: parsedUrl.protocol === 'ftps:',
+    port: parsedUrl.port ? Number(parsedUrl.port) : getDefaultPort(protocolValue),
+    secure: protocolValue === 'ftps',
     basePath:
       parsedUrl.pathname && parsedUrl.pathname !== '/'
         ? parsedUrl.pathname.replace(/\/+$/, '')
@@ -479,27 +560,114 @@ const parseFtpLocation = (
   }
 }
 
-const withFtp = async <T>(
+const connectFtpClient = async (
   config: AppConfig,
-  action: (client: Client, basePath: string) => Promise<T>
-): Promise<T> => {
-  const ftp = parseFtpLocation(config.ftpUrl)
+  remote: ParsedRemoteLocation
+): Promise<RemoteClient> => {
   const client = new Client(30_000)
 
   client.ftp.verbose = false
 
-  try {
-    await client.access({
-      host: ftp.host,
-      port: ftp.port,
-      user: config.ftpUsername,
-      password: config.ftpPassword,
-      secure: ftp.secure
-    })
+  await client.access({
+    host: remote.host,
+    port: remote.port,
+    user: config.ftpUsername,
+    password: config.ftpPassword,
+    secure: remote.secure
+  })
 
-    return await action(client, ftp.basePath)
+  return {
+    close: () => {
+      client.close()
+    },
+    list: async (remotePath: string) => {
+      const entries = await client.list(remotePath)
+      return entries.map((entry) => ({
+        name: entry.name,
+        type: entry.type === FileType.Directory ? 'directory' : 'file',
+        size: entry.size,
+        modifiedAt: entry.modifiedAt ?? null
+      }))
+    },
+    downloadTo: async (localPath: string, remotePath: string) => {
+      await client.downloadTo(localPath, remotePath)
+    },
+    setDownloadProgressHandler: (handler: DownloadProgressHandler) => {
+      client.trackProgress((info) => {
+        if (!handler || info.type !== 'download') {
+          return
+        }
+
+        handler(info.bytes)
+      })
+    },
+    abortActiveTransfer: () => {
+      client.close()
+    }
+  }
+}
+
+const connectSftpClient = async (
+  config: AppConfig,
+  remote: ParsedRemoteLocation
+): Promise<RemoteClient> => {
+  const client = new SftpClient()
+  let downloadProgressHandler: DownloadProgressHandler = null
+
+  await client.connect({
+    host: remote.host,
+    port: remote.port,
+    username: config.ftpUsername,
+    password: config.ftpPassword,
+    readyTimeout: 30_000
+  })
+
+  return {
+    close: () => client.end(),
+    list: async (remotePath: string) => {
+      const entries = await client.list(remotePath)
+      return entries.map((entry) => ({
+        name: entry.name,
+        type: entry.type === 'd' ? 'directory' : 'file',
+        size: Number(entry.size) || 0,
+        modifiedAt:
+          typeof entry.modifyTime === 'number' && entry.modifyTime > 0
+            ? new Date(entry.modifyTime)
+            : null
+      }))
+    },
+    downloadTo: async (localPath: string, remotePath: string) => {
+      await client.fastGet(remotePath, localPath, {
+        step: (transferred) => {
+          if (downloadProgressHandler) {
+            downloadProgressHandler(transferred)
+          }
+        }
+      })
+    },
+    setDownloadProgressHandler: (handler: DownloadProgressHandler) => {
+      downloadProgressHandler = handler
+    },
+    abortActiveTransfer: () => {
+      void client.end()
+    }
+  }
+}
+
+const withRemote = async <T>(
+  config: AppConfig,
+  action: (client: RemoteClient, basePath: string) => Promise<T>
+): Promise<T> => {
+  const remote = parseRemoteLocation(config.ftpUrl)
+  const client =
+    remote.protocol === 'sftp'
+      ? await connectSftpClient(config, remote)
+      : await connectFtpClient(config, remote)
+
+  try {
+    return await action(client, remote.basePath)
   } finally {
-    client.close()
+    await client.close()
   }
 }
 
@@ -539,16 +707,15 @@ const getLocalFileMap = async (directoryPath: string): Promise<Map<string, numbe
 }
 
 const listPlatforms = async (config: AppConfig): Promise<PlatformSummary[]> => {
-  return withFtp(config, async (client, basePath) => {
+  return withRemote(config, async (client, basePath) => {
     const remoteEntries = await client.list(basePath)
     const platforms: PlatformSummary[] = []
 
-    for (const entry of remoteEntries.filter((item) => item.type === FileType.Directory)) {
+    for (const entry of remoteEntries.filter((item) => item.type === 'directory')) {
       const platformDefinition = getPlatformDefinition(entry.name)
       const platformPath = remoteJoin(basePath, entry.name)
       const gameEntries = (await client.list(platformPath)).filter(
-        (item) =>
-          item.type === FileType.File && isAllowedRomFile(item.name, platformDefinition.extensions)
+        (item) => item.type === 'file' && isAllowedRomFile(item.name, platformDefinition.extensions)
       )
 
       if (gameEntries.length === 0) {
@@ -584,7 +751,7 @@ const listGames = async (
   const fetchMissingMetadata = options?.fetchMissingMetadata ?? true
   const forceRefetchMetadata = options?.forceRefetchMetadata ?? false
 
-  return withFtp(config, async (client, basePath) => {
+  return withRemote(config, async (client, basePath) => {
     const platformDefinition = getPlatformDefinition(platformName)
     const metadataCache = await readMetadataCache()
     let cacheDirty = false
@@ -594,8 +761,7 @@ const listGames = async (
     const localPlatformPath = join(config.romsDirectory, platformName)
     const localFiles = await getLocalFileMap(localPlatformPath)
     const remoteEntries = (await client.list(platformRemotePath)).filter(
-      (item) =>
-        item.type === FileType.File && isAllowedRomFile(item.name, platformDefinition.extensions)
+      (item) => item.type === 'file' && isAllowedRomFile(item.name, platformDefinition.extensions)
     )
     const groupedRemoteEntries = new Map<string, typeof remoteEntries>()
 
@@ -902,7 +1068,7 @@ const runDownloadQueue = async (
       const targetLocalPaths = downloadTargets.map((target) => target.localPath)
 
       try {
-        await withFtp(config, async (client) => {
+        await withRemote(config, async (client) => {
           activeDownloadClient = client
           activeDownloadingGameId = game.id
           let downloadedBytesBeforeCurrent = 0
@@ -976,14 +1142,11 @@ const runDownloadQueue = async (
             })
           }, 700)
 
-          client.trackProgress((info) => {
-            if (info.type !== 'download') {
-              return
-            }
-
+          client.setDownloadProgressHandler((bytesTransferredForCurrentFile) => {
             const transferredBytes = Math.min(
               game.size,
-              downloadedBytesBeforeCurrent + Math.min(info.bytes, activeTargetSize)
+              downloadedBytesBeforeCurrent +
+                Math.min(bytesTransferredForCurrentFile, activeTargetSize)
             )
 
             updateItemStatus(game.id, (item) => ({
@@ -1000,25 +1163,25 @@ const runDownloadQueue = async (
 
                       return Math.max(0, computed)
                     })()
-                  : info.bytes > 0
+                  : bytesTransferredForCurrentFile > 0
                     ? Math.max(1, item.progress)
                     : item.progress
             }))
 
             if (cancelledGameIds.has(game.id)) {
-              client.close()
+              client.abortActiveTransfer()
             }
           })
 
           if (cancelledGameIds.has(game.id)) {
-            client.close()
+            client.abortActiveTransfer()
             throw new Error('Download cancelled')
           }
 
           try {
             for (const target of downloadTargets) {
               if (cancelledGameIds.has(game.id)) {
-                client.close()
+                client.abortActiveTransfer()
                 throw new Error('Download cancelled')
               }
 
@@ -1045,6 +1208,7 @@ const runDownloadQueue = async (
               }))
             }
           } finally {
+            client.setDownloadProgressHandler(null)
             clearInterval(localProgressInterval)
             clearInterval(optimisticProgressInterval)
           }
@@ -1128,7 +1292,7 @@ const cancelDownload = (gameId: string): DownloadSnapshot => {
     activeDownloadingGameId === gameId &&
     activeDownloadClient
   ) {
-    activeDownloadClient.close()
+    activeDownloadClient.abortActiveTransfer()
   }
 
   return currentDownloadSnapshot
@@ -1222,17 +1386,19 @@ ipcMain.handle('app:test-ftp-connection', async (_event, config: Partial<AppConf
   const sanitizedConfig = sanitizeConfig(config)
 
   if (!sanitizedConfig.ftpUrl || !sanitizedConfig.ftpUsername || !sanitizedConfig.ftpPassword) {
-    throw new Error('FTP URL, username, and password are required for connection testing.')
+    throw new Error('Connection URL, username, and password are required for connection testing.')
   }
 
   try {
-    await withFtp(sanitizedConfig, async (client, basePath) => {
+    await withRemote(sanitizedConfig, async (client, basePath) => {
       await client.list(basePath)
     })
     return true
   } catch (error) {
     throw new Error(
-      error instanceof Error ? `FTP test failed: ${error.message}` : 'FTP test failed.'
+      error instanceof Error
+        ? `Connection test failed: ${error.message}`
+        : 'Connection test failed.'
     )
   }
 })
@@ -1276,11 +1442,12 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
     const hasSnake =
       parsed.FTP_HOSTNAME || parsed.FTP_PORT || parsed.FTP_PATH || parsed.ROMS_DIRECTORY
     if (hasSnake) {
-      const hostname = parsed.FTP_HOSTNAME || ''
-      const port = parsed.FTP_PORT || '21'
-      const path = parsed.FTP_PATH || '/'
-      const portSegment = port && port !== '21' ? `:${port}` : ''
-      const ftpUrl = hostname ? `ftp://${hostname}${portSegment}${path}` : ''
+      const ftpUrl = buildConnectionUrl(
+        parsed.FTP_PROTOCOL || parsed.PROTOCOL,
+        parsed.FTP_HOSTNAME,
+        parsed.FTP_PORT,
+        parsed.FTP_PATH
+      )
       configData = {
         ftpUrl,
         ftpUsername: parsed.FTP_USERNAME || '',
@@ -1291,11 +1458,12 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
       }
     } else if (parsed.ftpHostname || parsed.ftpPort || parsed.ftpPath) {
       // camelCase structure
-      const hostname = parsed.ftpHostname || ''
-      const port = parsed.ftpPort || '21'
-      const path = parsed.ftpPath || '/'
-      const portSegment = port && port !== '21' ? `:${port}` : ''
-      const ftpUrl = hostname ? `ftp://${hostname}${portSegment}${path}` : ''
+      const ftpUrl = buildConnectionUrl(
+        parsed.ftpProtocol || parsed.protocol,
+        parsed.ftpHostname,
+        parsed.ftpPort,
+        parsed.ftpPath
+      )
       configData = {
         ...parsed,
         ftpUrl,
