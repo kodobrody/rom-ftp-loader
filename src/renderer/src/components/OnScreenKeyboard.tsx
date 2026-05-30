@@ -8,6 +8,7 @@ interface OnScreenKeyboardProps {
   onHide: () => void
   closeLabel: string
   previewVersion?: number
+  showPreview?: boolean
   className?: string
   docked?: boolean
 }
@@ -16,7 +17,20 @@ const keyButtonClass = 'min-w-11 px-3'
 const wideKeyButtonClass = 'min-w-24 px-4'
 
 export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
-  ({ className, closeLabel, docked = false, onHide, onKeyPress, previewVersion, rows, targetRef }: OnScreenKeyboardProps, ref): React.JSX.Element => {
+  (
+    {
+      className,
+      closeLabel,
+      docked = false,
+      onHide,
+      onKeyPress,
+      previewVersion,
+      rows,
+      showPreview = true,
+      targetRef
+    }: OnScreenKeyboardProps,
+    ref
+  ): React.JSX.Element => {
     void previewVersion
     const target = targetRef.current
     const value = target?.value || ''
@@ -30,13 +44,18 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
         className={`${docked ? 'mt-3' : 'fixed inset-x-0 bottom-4 z-40 mx-auto w-full max-w-4xl px-4'} ${className ?? ''}`.trim()}
         ref={ref}
       >
-        <Card className='border-none! outline-none!'>
+        <Card className="border-none! outline-none!">
           <Card.Content className="gap-3 p-3">
-            <div className="min-h-9 break-all rounded-lg  bg-black/30 px-3 py-2 text-sm text-zinc-200">
-              {beforeCursor}
-              <span className="inline-block h-4 w-px animate-pulse align-middle bg-white" style={{ animationDuration: '1s' }} />
-              {afterCursor}
-            </div>
+            {showPreview ? (
+              <div className="min-h-9 break-all rounded-lg  bg-black/30 px-3 py-2 text-sm text-zinc-200">
+                {beforeCursor}
+                <span
+                  className="inline-block h-4 w-px animate-pulse align-middle bg-white"
+                  style={{ animationDuration: '1s' }}
+                />
+                {afterCursor}
+              </div>
+            ) : null}
             <div className="grid gap-2">
               {rows.map((row, rowIndex) => (
                 <div className="flex justify-center gap-2" key={`keyboard-row-${rowIndex}`}>
@@ -106,11 +125,7 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
                 >
                   Clear
                 </Button>
-                <Button
-                  className={wideKeyButtonClass}
-                  onPress={onHide}
-                  variant="tertiary"
-                >
+                <Button className={wideKeyButtonClass} onPress={onHide} variant="tertiary">
                   {closeLabel}
                 </Button>
               </div>
@@ -121,3 +136,5 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
     )
   }
 )
+
+OnScreenKeyboard.displayName = 'OnScreenKeyboard'

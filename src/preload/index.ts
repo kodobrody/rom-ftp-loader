@@ -21,8 +21,8 @@ const api = {
   pickConfigFile: () => ipcRenderer.invoke('app:pick-config-file') as Promise<string | null>,
   loadConfigFromFile: (filePath: string) =>
     ipcRenderer.invoke('app:load-config-from-file', filePath) as Promise<AppConfig>,
-  testFtpConnection: (config: AppConfig) =>
-    ipcRenderer.invoke('app:test-ftp-connection', config) as Promise<boolean>,
+  testFileServiceConnection: (config: AppConfig) =>
+    ipcRenderer.invoke('app:test-file-service-connection', config) as Promise<boolean>,
   testTwitchConnection: (config: AppConfig) =>
     ipcRenderer.invoke('app:test-twitch-connection', config) as Promise<boolean>,
   getLibraryCache: () => ipcRenderer.invoke('library:get-cache') as Promise<LibraryCacheSnapshot>,

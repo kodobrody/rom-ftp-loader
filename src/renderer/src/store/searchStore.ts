@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { SearchIndexEntry } from '../utils/search'
 import { useGameModalStore } from './modals/gameModalStore'
 import { useKeyboardModalStore } from './modals/keyboardModalStore'
+import { useSetupStore } from './setupStore'
 
 const applyInputEvent = (target: HTMLInputElement | HTMLTextAreaElement): void => {
   target.dispatchEvent(new Event('input', { bubbles: true }))
@@ -45,6 +46,7 @@ interface SearchStore {
   onScreenKeyboardRef: React.RefObject<HTMLElement | null>
   keyboardRows: string[][]
   setSearchQuery: (value: string) => void
+  setShowOnScreenKeyboard: (value: boolean) => void
   prepareSearchSession: () => void
   resetSearchSession: () => void
   openSearchResultInModal: (entry: SearchIndexEntry) => Promise<void>
@@ -66,11 +68,16 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
   setSearchQuery: (searchQuery) => {
     set({ searchQuery })
   },
+  setShowOnScreenKeyboard: (showOnScreenKeyboard) => {
+    set({ showOnScreenKeyboard })
+  },
   prepareSearchSession: () => {
-    set({ searchQuery: '', showOnScreenKeyboard: true })
+    const inputKeyboardMode = useSetupStore.getState().config.inputKeyboardMode
+    set({ searchQuery: '', showOnScreenKeyboard: inputKeyboardMode === 'always' })
   },
   resetSearchSession: () => {
     set({ searchQuery: '', showOnScreenKeyboard: false })
+    useKeyboardModalStore.getState().setShowOnScreenKeyboard(false)
   },
   openSearchResultInModal: async (entry) => {
     useGameModalStore.getState().openGameModalFromEntry(entry.game)

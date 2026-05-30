@@ -1,11 +1,17 @@
+export type FileServiceType = 'ftp' | 'ftps' | 'sftp' | 'nextcloud' | 'romm'
+export type InputKeyboardMode = 'always' | 'gamepad'
+
 export interface AppConfig {
   romsDirectory: string
   twitchClientId: string
   twitchAccessToken: string
   twitchClientSecret: string
+  fileServiceType: FileServiceType
   ftpUrl: string
   ftpUsername: string
   ftpPassword: string
+  rommApiToken: string
+  inputKeyboardMode: InputKeyboardMode
 }
 
 export interface PlatformSummary {

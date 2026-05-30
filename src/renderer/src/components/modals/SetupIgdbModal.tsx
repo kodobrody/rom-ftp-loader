@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../shared/types'
 import { useAppStateStore } from '../../store/appStateStore'
+import { useKeyboardModalStore } from '../../store/modals/keyboardModalStore'
 import { useSetupStore } from '../../store/setupStore'
 
 interface SetupIgdbModalProps {
@@ -27,8 +28,18 @@ const createIgdbFormValues = (config: AppConfig): IgdbFormValues => ({
 export const SetupIgdbModal = ({ isOpen, onClose }: SetupIgdbModalProps): React.JSX.Element => {
   const { config, persistConfig } = useSetupStore()
   const { setErrorMessage, setInfoMessage } = useAppStateStore()
+  const { setKeyboardTarget, setShowOnScreenKeyboard } = useKeyboardModalStore()
   const [isSaving, setIsSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const handleTextInputClick = (event: React.MouseEvent<HTMLInputElement>): void => {
+    if (config.inputKeyboardMode !== 'always') {
+      return
+    }
+
+    setKeyboardTarget(event.currentTarget)
+    setShowOnScreenKeyboard(true)
+  }
 
   const defaultValues = useMemo(() => createIgdbFormValues(config), [config])
 
@@ -116,6 +127,7 @@ export const SetupIgdbModal = ({ isOpen, onClose }: SetupIgdbModalProps): React.
                 <span className="text-sm text-zinc-300">Client ID</span>
                 <Input
                   className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                  onClick={handleTextInputClick}
                   {...register('clientId')}
                   placeholder="Twitch Client ID"
                 />
@@ -128,6 +140,7 @@ export const SetupIgdbModal = ({ isOpen, onClose }: SetupIgdbModalProps): React.
                 <span className="text-sm text-zinc-300">Client Secret</span>
                 <Input
                   className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                  onClick={handleTextInputClick}
                   type="password"
                   {...register('clientSecret')}
                   placeholder="Twitch Client Secret"

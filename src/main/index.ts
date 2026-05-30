@@ -36,8 +36,10 @@ let activeDownloadingGameId: string | null = null
 const cancelledGameIds = new Set<string>()
 
 type RemoteProtocol = 'ftp' | 'ftps' | 'sftp'
+type FileServiceType = AppConfig['fileServiceType']
 
 interface ParsedRemoteLocation {
+  fileServiceType: FileServiceType
   protocol: RemoteProtocol
   host: string
   port: number
@@ -60,6 +62,26 @@ interface RemoteClient {
   downloadTo: (localPath: string, remotePath: string) => Promise<void>
   setDownloadProgressHandler: (handler: DownloadProgressHandler) => void
   abortActiveTransfer: () => void
+}
+
+interface RommPlatformDto {
+  id?: number
+  fs_slug?: string
+  slug?: string
+  name?: string
+}
+
+interface RommRomFileDto {
+  id?: number
+  file_name?: string
+  file_size_bytes?: number
+}
+
+interface RommRomDto {
+  id?: number
+  fs_name?: string
+  updated_at?: string
+  files?: RommRomFileDto[]
 }
 
 export interface PlatformDefinition {
@@ -540,14 +562,28 @@ const testTwitchConnection = async (config: AppConfig): Promise<boolean> => {
 }
 
 const sanitizeConfig = (config: Partial<AppConfig>): AppConfig => {
+  const rawServiceType = String(config.fileServiceType || 'ftp').toLowerCase()
+  const fileServiceType: FileServiceType =
+    rawServiceType === 'romm' ||
+    rawServiceType === 'nextcloud' ||
+    rawServiceType === 'ftps' ||
+    rawServiceType === 'sftp'
+      ? rawServiceType
+      : 'ftp'
+  const rawInputKeyboardMode = String(config.inputKeyboardMode || 'gamepad').toLowerCase()
+  const inputKeyboardMode = rawInputKeyboardMode === 'always' ? 'always' : 'gamepad'
+
   return {
     romsDirectory: config.romsDirectory?.trim() ?? '',
     twitchClientId: config.twitchClientId?.trim() ?? '',
     twitchAccessToken: normalizeTwitchAccessToken(config.twitchAccessToken),
     twitchClientSecret: normalizeTwitchClientSecret(config.twitchClientSecret),
+    fileServiceType,
     ftpUrl: config.ftpUrl?.trim() ?? '',
     ftpUsername: config.ftpUsername?.trim() ?? '',
-    ftpPassword: config.ftpPassword ?? ''
+    ftpPassword: config.ftpPassword ?? '',
+    rommApiToken: config.rommApiToken?.trim() ?? '',
+    inputKeyboardMode
   }
 }
 
@@ -574,7 +610,15 @@ const saveConfigToDisk = async (config: Partial<AppConfig>): Promise<AppConfig> 
 }
 
 const isConfigComplete = (config: AppConfig): boolean => {
-  return Boolean(config.romsDirectory && config.ftpUrl && config.ftpUsername && config.ftpPassword)
+  if (!config.romsDirectory || !config.ftpUrl) {
+    return false
+  }
+
+  if (config.fileServiceType === 'romm') {
+    return Boolean(config.rommApiToken)
+  }
+
+  return Boolean(config.ftpUsername && config.ftpPassword)
 }
 
 const assertConfigured = (config: AppConfig): void => {
@@ -647,6 +691,7 @@ const parseRemoteLocation = (remoteUrl: string): ParsedRemoteLocation => {
   const protocolValue = normalizeRemoteProtocol(parsedUrl.protocol)
 
   return {
+    fileServiceType: protocolValue,
     protocol: protocolValue,
     host: parsedUrl.hostname,
     port: parsedUrl.port ? Number(parsedUrl.port) : getDefaultPort(protocolValue),
@@ -655,6 +700,400 @@ const parseRemoteLocation = (remoteUrl: string): ParsedRemoteLocation => {
       parsedUrl.pathname && parsedUrl.pathname !== '/'
         ? parsedUrl.pathname.replace(/\/+$/, '')
         : '/'
+  }
+}
+
+const normalizeRemoteBaseUrl = (config: AppConfig, fallbackProtocol: 'http' | 'https'): string => {
+  const rawUrl = config.ftpUrl.trim()
+
+  if (!rawUrl) {
+    throw new Error('Connection URL is required.')
+  }
+
+  const withProtocol = rawUrl.includes('://') ? rawUrl : `${fallbackProtocol}://${rawUrl}`
+  const parsed = new URL(withProtocol)
+  const pathname = parsed.pathname.replace(/\/+$/, '')
+
+  return `${parsed.protocol}//${parsed.host}${pathname}`
+}
+
+const parseSimpleXmlTagValues = (xml: string, tagName: string): string[] => {
+  const matches = xml.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)</${tagName}>`, 'gi'))
+
+  if (!matches) {
+    return []
+  }
+
+  return matches
+    .map((entry) => entry.replace(new RegExp(`^<${tagName}[^>]*>|</${tagName}>$`, 'gi'), ''))
+    .map((entry) =>
+      entry
+        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .trim()
+    )
+}
+
+const parseNextcloudEntries = (xml: string, baseUrl: string): RemoteEntry[] => {
+  const responses = xml.match(/<d:response>[\s\S]*?<\/d:response>/gi) ?? []
+  const normalizedBase = `${baseUrl.replace(/\/+$/, '')}/`
+  const entries: RemoteEntry[] = []
+
+  for (const response of responses) {
+    const hrefRaw = parseSimpleXmlTagValues(response, 'd:href')[0]
+
+    if (!hrefRaw) {
+      continue
+    }
+
+    const hrefDecoded = decodeURIComponent(hrefRaw)
+    const normalizedHref = hrefDecoded.startsWith('http')
+      ? hrefDecoded
+      : new URL(hrefDecoded, normalizedBase).toString()
+
+    if (!normalizedHref.startsWith(normalizedBase)) {
+      continue
+    }
+
+    const relativePath = normalizedHref.slice(normalizedBase.length).replace(/^\/+/, '')
+
+    if (!relativePath) {
+      continue
+    }
+
+    const isDirectory = /<d:collection\/?>(?:<\/d:collection>)?/i.test(response)
+    const sanitizedRelativePath = relativePath.replace(/\/+$/, '')
+    const entryName = sanitizedRelativePath.split('/').pop() || sanitizedRelativePath
+    const contentLength = Number.parseInt(
+      parseSimpleXmlTagValues(response, 'd:getcontentlength')[0],
+      10
+    )
+    const lastModifiedRaw = parseSimpleXmlTagValues(response, 'd:getlastmodified')[0]
+
+    entries.push({
+      name: entryName,
+      type: isDirectory ? 'directory' : 'file',
+      size: Number.isFinite(contentLength) ? contentLength : 0,
+      modifiedAt: lastModifiedRaw ? new Date(lastModifiedRaw) : null
+    })
+  }
+
+  return entries
+}
+
+const buildRommApiUrl = (baseUrl: string, path: string): string => {
+  const normalizedBase = baseUrl.replace(/\/+$/, '')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${normalizedBase}${normalizedPath}`
+}
+
+const rommRequest = async (
+  config: AppConfig,
+  method: 'GET' | 'POST',
+  path: string,
+  body?: string
+): Promise<Response> => {
+  if (!fetchFromMain) {
+    throw new Error('Network requests are not available in this runtime.')
+  }
+
+  const baseUrl = normalizeRemoteBaseUrl(config, 'http')
+  const response = await fetchFromMain(buildRommApiUrl(baseUrl, path), {
+    method,
+    headers: {
+      Authorization: `Bearer ${config.rommApiToken}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body
+  })
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '')
+    throw new Error(`RomM request failed (${response.status})${details ? `: ${details}` : ''}`)
+  }
+
+  return response
+}
+
+const parseRommPlatformsPayload = (payload: unknown): RommPlatformDto[] => {
+  if (Array.isArray(payload)) {
+    return payload as RommPlatformDto[]
+  }
+
+  if (payload && typeof payload === 'object') {
+    const objectPayload = payload as Record<string, unknown>
+
+    if (Array.isArray(objectPayload.items)) {
+      return objectPayload.items as RommPlatformDto[]
+    }
+
+    if (Array.isArray(objectPayload.results)) {
+      return objectPayload.results as RommPlatformDto[]
+    }
+
+    if (Array.isArray(objectPayload.data)) {
+      return objectPayload.data as RommPlatformDto[]
+    }
+  }
+
+  return []
+}
+
+const parseRommRomsPayload = (payload: unknown): RommRomDto[] => {
+  if (Array.isArray(payload)) {
+    return payload as RommRomDto[]
+  }
+
+  if (payload && typeof payload === 'object') {
+    const objectPayload = payload as Record<string, unknown>
+
+    if (Array.isArray(objectPayload.items)) {
+      return objectPayload.items as RommRomDto[]
+    }
+
+    if (Array.isArray(objectPayload.results)) {
+      return objectPayload.results as RommRomDto[]
+    }
+
+    if (Array.isArray(objectPayload.data)) {
+      return objectPayload.data as RommRomDto[]
+    }
+  }
+
+  return []
+}
+
+const rommGetJsonWithFallback = async (
+  config: AppConfig,
+  candidatePaths: string[]
+): Promise<unknown> => {
+  let lastError: unknown = null
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      const response = await rommRequest(config, 'GET', candidatePath)
+      return await response.json()
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error('RomM request failed for all candidate endpoints.')
+}
+
+const connectNextcloudClient = async (config: AppConfig): Promise<RemoteClient> => {
+  if (!fetchFromMain) {
+    throw new Error('Network requests are not available in this runtime.')
+  }
+
+  const baseUrl = normalizeRemoteBaseUrl(config, 'https')
+
+  const authHeader = `Basic ${Buffer.from(`${config.ftpUsername}:${config.ftpPassword}`, 'utf8').toString('base64')}`
+
+  const list = async (remotePath: string): Promise<RemoteEntry[]> => {
+    const normalizedPath = remotePath === '/' ? '' : remotePath.replace(/^\//, '')
+    const targetUrl = `${baseUrl}/${normalizedPath}`.replace(/([^:]\/)\/+/g, '$1')
+    const response = await fetchFromMain(targetUrl, {
+      method: 'PROPFIND',
+      headers: {
+        Authorization: authHeader,
+        Depth: '1'
+      }
+    })
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => '')
+      throw new Error(
+        `Nextcloud PROPFIND failed (${response.status})${details ? `: ${details}` : ''}`
+      )
+    }
+
+    const xml = await response.text()
+    return parseNextcloudEntries(xml, targetUrl)
+  }
+
+  return {
+    close: () => undefined,
+    list,
+    downloadTo: async (localPath: string, remotePath: string) => {
+      const normalizedPath = remotePath.replace(/^\//, '')
+      const targetUrl = `${baseUrl}/${normalizedPath}`.replace(/([^:]\/)\/+/g, '$1')
+      const response = await fetchFromMain(targetUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: authHeader
+        }
+      })
+
+      if (!response.ok) {
+        const details = await response.text().catch(() => '')
+        throw new Error(
+          `Nextcloud download failed (${response.status})${details ? `: ${details}` : ''}`
+        )
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer())
+      await writeFile(localPath, buffer)
+    },
+    setDownloadProgressHandler: () => undefined,
+    abortActiveTransfer: () => undefined
+  }
+}
+
+const connectRommClient = async (config: AppConfig): Promise<RemoteClient> => {
+  const list = async (remotePath: string): Promise<RemoteEntry[]> => {
+    const trimmed = remotePath.replace(/^\/+|\/+$/g, '')
+
+    if (!trimmed || trimmed === '.') {
+      const payload = await rommGetJsonWithFallback(config, [
+        '/platforms?limit=1000&offset=0',
+        '/platforms'
+      ])
+      const platforms = parseRommPlatformsPayload(payload)
+
+      const platformEntries = platforms.map((platform) => {
+        const name = platform.fs_slug || platform.slug || platform.name || ''
+
+        if (!name) {
+          return null
+        }
+
+        return {
+          name,
+          type: 'directory' as const,
+          size: 0,
+          modifiedAt: null
+        }
+      })
+
+      return platformEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    }
+
+    const platformPayload = await rommGetJsonWithFallback(config, [
+      `/platforms?limit=1000&offset=0&search_term=${encodeURIComponent(trimmed)}`,
+      `/platforms?search_term=${encodeURIComponent(trimmed)}`,
+      '/platforms'
+    ])
+    const platforms = parseRommPlatformsPayload(platformPayload)
+    const platform = platforms.find(
+      (candidate) =>
+        candidate.fs_slug?.toLowerCase() === trimmed.toLowerCase() ||
+        candidate.slug?.toLowerCase() === trimmed.toLowerCase() ||
+        candidate.name?.toLowerCase() === trimmed.toLowerCase()
+    )
+
+    if (!platform?.id) {
+      return []
+    }
+
+    const romPayload = await rommGetJsonWithFallback(config, [
+      `/roms?platform_ids=${platform.id}&limit=10000&offset=0`,
+      `/roms?platform_ids=${platform.id}`,
+      `/roms?platform_id=${platform.id}`,
+      `/roms?platform_id=${platform.id}&limit=10000&offset=0`
+    ])
+    const roms = parseRommRomsPayload(romPayload)
+
+    const romEntries = roms.map((rom) => {
+      const primaryFile = rom.files?.[0]
+      const name = primaryFile?.file_name || rom.fs_name || ''
+
+      if (!name) {
+        return null
+      }
+
+      return {
+        name,
+        type: 'file' as const,
+        size: primaryFile?.file_size_bytes ?? 0,
+        modifiedAt: rom.updated_at ? new Date(rom.updated_at) : null
+      }
+    })
+
+    return romEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+  }
+
+  return {
+    close: () => undefined,
+    list,
+    downloadTo: async (localPath: string, remotePath: string) => {
+      const [platformSegment, ...fileSegments] = remotePath.replace(/^\/+/, '').split('/')
+      const fileName = fileSegments.join('/')
+
+      if (!platformSegment || !fileName) {
+        throw new Error('Invalid RomM remote path format.')
+      }
+
+      const platformPayload = await rommGetJsonWithFallback(config, [
+        `/platforms?limit=1000&offset=0&search_term=${encodeURIComponent(platformSegment)}`,
+        `/platforms?search_term=${encodeURIComponent(platformSegment)}`,
+        '/platforms'
+      ])
+      const platforms = parseRommPlatformsPayload(platformPayload)
+      const platform = platforms.find(
+        (candidate) =>
+          candidate.fs_slug?.toLowerCase() === platformSegment.toLowerCase() ||
+          candidate.slug?.toLowerCase() === platformSegment.toLowerCase() ||
+          candidate.name?.toLowerCase() === platformSegment.toLowerCase()
+      )
+
+      if (!platform?.id) {
+        throw new Error(`Could not resolve RomM platform '${platformSegment}'.`)
+      }
+
+      const searchTerm = encodeURIComponent(fileName.replace(/\.[^.]+$/, ''))
+      const romPayload = await rommGetJsonWithFallback(config, [
+        `/roms?platform_ids=${platform.id}&limit=10000&offset=0&search_term=${searchTerm}`,
+        `/roms?platform_ids=${platform.id}&search_term=${searchTerm}`,
+        `/roms?platform_id=${platform.id}&limit=10000&offset=0&search_term=${searchTerm}`,
+        `/roms?platform_id=${platform.id}&search_term=${searchTerm}`,
+        `/roms?platform_ids=${platform.id}`,
+        `/roms?platform_id=${platform.id}`
+      ])
+      const matchingRom = parseRommRomsPayload(romPayload).find((rom) =>
+        (rom.files ?? []).some((file) => file.file_name === fileName)
+      )
+      const matchingFile = matchingRom?.files?.find((file) => file.file_name === fileName)
+
+      if (!matchingRom?.id || !matchingFile?.file_name) {
+        throw new Error(`Could not resolve RomM file '${fileName}'.`)
+      }
+
+      const baseUrl = normalizeRemoteBaseUrl(config, 'http')
+      const contentUrl = buildRommApiUrl(
+        baseUrl,
+        `/roms/${matchingRom.id}/content/${encodeURIComponent(matchingFile.file_name)}`
+      )
+
+      if (!fetchFromMain) {
+        throw new Error('Network requests are not available in this runtime.')
+      }
+
+      const response = await fetchFromMain(contentUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${config.rommApiToken}`
+        }
+      })
+
+      if (!response.ok) {
+        const details = await response.text().catch(() => '')
+        throw new Error(`RomM download failed (${response.status})${details ? `: ${details}` : ''}`)
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer())
+      await writeFile(localPath, buffer)
+    },
+    setDownloadProgressHandler: () => undefined,
+    abortActiveTransfer: () => undefined
   }
 }
 
@@ -756,14 +1195,27 @@ const withRemote = async <T>(
   config: AppConfig,
   action: (client: RemoteClient, basePath: string) => Promise<T>
 ): Promise<T> => {
+  const serviceType = config.fileServiceType
   const remote = parseRemoteLocation(config.ftpUrl)
-  const client =
-    remote.protocol === 'sftp'
-      ? await connectSftpClient(config, remote)
-      : await connectFtpClient(config, remote)
+
+  let client: RemoteClient
+  let basePath = remote.basePath
+
+  if (serviceType === 'romm') {
+    client = await connectRommClient(config)
+    basePath = '/'
+  } else if (serviceType === 'nextcloud') {
+    client = await connectNextcloudClient(config)
+    basePath = '/'
+  } else {
+    client =
+      serviceType === 'sftp'
+        ? await connectSftpClient(config, remote)
+        : await connectFtpClient(config, remote)
+  }
 
   try {
-    return await action(client, remote.basePath)
+    return await action(client, basePath)
   } finally {
     await client.close()
   }
@@ -1479,11 +1931,19 @@ ipcMain.handle('app:save-config', async (_event, config: Partial<AppConfig>) =>
   saveConfigToDisk(config)
 )
 
-ipcMain.handle('app:test-ftp-connection', async (_event, config: Partial<AppConfig>) => {
+ipcMain.handle('app:test-file-service-connection', async (_event, config: Partial<AppConfig>) => {
   const sanitizedConfig = sanitizeConfig(config)
 
-  if (!sanitizedConfig.ftpUrl || !sanitizedConfig.ftpUsername || !sanitizedConfig.ftpPassword) {
-    throw new Error('Connection URL, username, and password are required for connection testing.')
+  if (!sanitizedConfig.ftpUrl) {
+    throw new Error('Connection URL is required for connection testing.')
+  }
+
+  if (sanitizedConfig.fileServiceType === 'romm') {
+    if (!sanitizedConfig.rommApiToken) {
+      throw new Error('API token is required for RomM connection testing.')
+    }
+  } else if (!sanitizedConfig.ftpUsername || !sanitizedConfig.ftpPassword) {
+    throw new Error('Username and password are required for connection testing.')
   }
 
   try {
@@ -1575,9 +2035,15 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
         parsed.FTP_PATH
       )
       configData = {
+        fileServiceType: (parsed.FILE_SERVICE_TYPE || '').toLowerCase() || undefined,
         ftpUrl,
         ftpUsername: parsed.FTP_USERNAME || '',
         ftpPassword: parsed.FTP_PASSWORD || '',
+        rommApiToken: parsed.ROMM_API_TOKEN || '',
+        inputKeyboardMode:
+          (parsed.INPUT_KEYBOARD_MODE || parsed.SHOW_KEYBOARD_FOR_INPUTS || '')
+            .toLowerCase()
+            .trim() || undefined,
         romsDirectory: parsed.ROMS_DIRECTORY || '',
         twitchClientId: parsed.TWITCH_CLIENT_ID || '',
         twitchClientSecret: parsed.TWITCH_CLIENT_SECRET || ''
@@ -1592,9 +2058,14 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
       )
       configData = {
         ...parsed,
+        fileServiceType: (parsed.fileServiceType || '').toLowerCase() || undefined,
         ftpUrl,
         ftpUsername: parsed.ftpUsername || '',
         ftpPassword: parsed.ftpPassword || '',
+        rommApiToken: parsed.rommApiToken || '',
+        inputKeyboardMode:
+          (parsed.inputKeyboardMode || parsed.showKeyboardForInputs || '').toLowerCase().trim() ||
+          undefined,
         romsDirectory: parsed.romsDirectory || '',
         twitchClientId: parsed.twitchClientId || '',
         twitchClientSecret: parsed.twitchClientSecret || ''

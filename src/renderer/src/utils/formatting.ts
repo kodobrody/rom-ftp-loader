@@ -5,9 +5,12 @@ export const emptyConfig: AppConfig = {
   twitchClientId: '',
   twitchAccessToken: '',
   twitchClientSecret: '',
+  fileServiceType: 'ftp',
   ftpUrl: '',
   ftpUsername: '',
-  ftpPassword: ''
+  ftpPassword: '',
+  rommApiToken: '',
+  inputKeyboardMode: 'gamepad'
 }
 
 export const emptySnapshot: DownloadSnapshot = {
@@ -19,7 +22,15 @@ export const emptySnapshot: DownloadSnapshot = {
 }
 
 export const hasRequiredSetup = (config: AppConfig): boolean => {
-  return Boolean(config.romsDirectory && config.ftpUrl && config.ftpUsername && config.ftpPassword)
+  if (!config.romsDirectory || !config.ftpUrl) {
+    return false
+  }
+
+  if (config.fileServiceType === 'romm') {
+    return Boolean(config.rommApiToken)
+  }
+
+  return Boolean(config.ftpUsername && config.ftpPassword)
 }
 
 export const formatBytes = (value: number): string => {

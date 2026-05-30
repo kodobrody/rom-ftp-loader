@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
+import { useSetupStore } from '../store/setupStore'
 
 type GamepadDirection = 'up' | 'down' | 'left' | 'right'
 type GamepadControl = GamepadDirection | 'activate' | 'back'
@@ -14,7 +15,7 @@ const FOCUS_SCROLL_PADDING_PX = 72
 const focusTrapSelector =
   '[data-gamepad-focus-trap="true"], [role="dialog"], [aria-modal="true"], [role="menu"]'
 
-function isElementVisible(element: HTMLElement): boolean {
+const isElementVisible = (element: HTMLElement): boolean => {
   const style = window.getComputedStyle(element)
   const rect = element.getBoundingClientRect()
 
@@ -27,7 +28,7 @@ function isElementVisible(element: HTMLElement): boolean {
   )
 }
 
-function hasOpenModalDialogOrMenu(): boolean {
+const hasOpenModalDialogOrMenu = (): boolean => {
   const overlayElements = Array.from(
     document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"], [role="menu"]')
   )
@@ -35,7 +36,7 @@ function hasOpenModalDialogOrMenu(): boolean {
   return overlayElements.some((element) => isElementVisible(element))
 }
 
-function dispatchEscapeToFocusedElement(): void {
+const dispatchEscapeToFocusedElement = (): void => {
   const target =
     (document.activeElement as HTMLElement | null) ?? document.body ?? document.documentElement
 
@@ -56,12 +57,12 @@ function dispatchEscapeToFocusedElement(): void {
   target.dispatchEvent(keyUpEvent)
 }
 
-function hasRouteLevelOverlayInLocation(): boolean {
+const hasRouteLevelOverlayInLocation = (): boolean => {
   const searchParams = new URLSearchParams(window.location.search)
   return searchParams.get('menu') === 'platforms'
 }
 
-function getTopVisibleFocusTrap(): HTMLElement | null {
+const getTopVisibleFocusTrap = (): HTMLElement | null => {
   const traps = Array.from(document.querySelectorAll<HTMLElement>(focusTrapSelector)).filter(
     (element) => isElementVisible(element)
   )
@@ -87,7 +88,7 @@ function getTopVisibleFocusTrap(): HTMLElement | null {
   return topTrap
 }
 
-function enforceFocusTrapIfNeeded(): void {
+const enforceFocusTrapIfNeeded = (): void => {
   const trap = getTopVisibleFocusTrap()
 
   if (!trap) {
@@ -108,7 +109,7 @@ function enforceFocusTrapIfNeeded(): void {
   }
 }
 
-function getFocusableElements(root: ParentNode): HTMLElement[] {
+const getFocusableElements = (root: ParentNode): HTMLElement[] => {
   return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
     const rect = element.getBoundingClientRect()
     const style = window.getComputedStyle(element)
@@ -123,11 +124,11 @@ function getFocusableElements(root: ParentNode): HTMLElement[] {
   })
 }
 
-function findNearestInDirection(
+const findNearestInDirection = (
   current: HTMLElement,
   candidates: HTMLElement[],
   direction: GamepadDirection
-): HTMLElement | null {
+): HTMLElement | null => {
   const currentRect = current.getBoundingClientRect()
   const currentX = currentRect.left + currentRect.width / 2
   const currentY = currentRect.top + currentRect.height / 2
@@ -174,11 +175,11 @@ function findNearestInDirection(
   return bestCandidate
 }
 
-function findAxisPreferredInDirection(
+const findAxisPreferredInDirection = (
   current: HTMLElement,
   candidates: HTMLElement[],
   direction: GamepadDirection
-): HTMLElement | null {
+): HTMLElement | null => {
   const currentRect = current.getBoundingClientRect()
   const currentX = currentRect.left + currentRect.width / 2
   const currentY = currentRect.top + currentRect.height / 2
@@ -232,7 +233,7 @@ function findAxisPreferredInDirection(
   return bestCandidate
 }
 
-function findNextGridItemOnRight(current: HTMLElement): HTMLElement | null {
+const findNextGridItemOnRight = (current: HTMLElement): HTMLElement | null => {
   const grid = current.closest('.platform-grid, .game-grid')
 
   if (!grid) {
@@ -251,7 +252,7 @@ function findNextGridItemOnRight(current: HTMLElement): HTMLElement | null {
   return gridItems[currentIndex + 1]
 }
 
-function findPreviousGridItemOnLeft(current: HTMLElement): HTMLElement | null {
+const findPreviousGridItemOnLeft = (current: HTMLElement): HTMLElement | null => {
   const grid = current.closest('.platform-grid, .game-grid')
 
   if (!grid) {
@@ -270,15 +271,15 @@ function findPreviousGridItemOnLeft(current: HTMLElement): HTMLElement | null {
   return gridItems[currentIndex - 1]
 }
 
-function getNavigationSection(element: HTMLElement): HTMLElement | null {
+const getNavigationSection = (element: HTMLElement): HTMLElement | null => {
   return element.closest(navigationSectionSelector)
 }
 
-function findSameRowCandidate(
+const findSameRowCandidate = (
   current: HTMLElement,
   candidates: HTMLElement[],
   direction: 'left' | 'right'
-): HTMLElement | null {
+): HTMLElement | null => {
   const currentRect = current.getBoundingClientRect()
   const currentCenterY = currentRect.top + currentRect.height / 2
   let bestCandidate: HTMLElement | null = null
@@ -328,7 +329,7 @@ function findSameRowCandidate(
   return bestCandidate
 }
 
-function resolveActivatableElement(element: HTMLElement): HTMLElement {
+const resolveActivatableElement = (element: HTMLElement): HTMLElement => {
   const activatable = element.closest(
     'button, [role="button"], a[href], summary, [data-gamepad-activate-target="true"]'
   )
@@ -336,7 +337,7 @@ function resolveActivatableElement(element: HTMLElement): HTMLElement {
   return (activatable as HTMLElement | null) ?? element
 }
 
-function getScrollContainer(element: HTMLElement): HTMLElement | null {
+const getScrollContainer = (element: HTMLElement): HTMLElement | null => {
   let current = element.parentElement
 
   while (current) {
@@ -356,11 +357,11 @@ function getScrollContainer(element: HTMLElement): HTMLElement | null {
   return null
 }
 
-function hasFocusableInVerticalDirection(
+const hasFocusableInVerticalDirection = (
   element: HTMLElement,
   focusableElements: HTMLElement[],
   direction: 'up' | 'down'
-): boolean {
+): boolean => {
   const currentRect = element.getBoundingClientRect()
   const currentCenterY = currentRect.top + currentRect.height / 2
 
@@ -377,11 +378,11 @@ function hasFocusableInVerticalDirection(
   })
 }
 
-function scrollFocusedElementIntoView(
+const scrollFocusedElementIntoView = (
   element: HTMLElement | null,
   scope: ParentNode,
   direction: GamepadDirection | null
-): void {
+): void => {
   if (!element || !isElementVisible(element)) {
     return
   }
@@ -453,6 +454,7 @@ function scrollFocusedElementIntoView(
 
 export const useGamepadNavigation = () => {
   const { setKeyboardTarget, setShowOnScreenKeyboard } = useKeyboardModalStore()
+  const inputKeyboardMode = useSetupStore((store) => store.config.inputKeyboardMode)
 
   useEffect(() => {
     let lastFocusDirection: GamepadDirection | null = null
@@ -539,7 +541,7 @@ export const useGamepadNavigation = () => {
       back: 0
     }
 
-    function handleBackAction(): void {
+    const handleBackAction = (): void => {
       if (hasRouteLevelOverlayInLocation() && window.history.length > 1) {
         window.history.back()
         return
@@ -555,7 +557,7 @@ export const useGamepadNavigation = () => {
       }
     }
 
-    function isControlPressed(direction: GamepadControl): boolean {
+    const isControlPressed = (direction: GamepadControl): boolean => {
       const gamepads = navigator.getGamepads ? navigator.getGamepads() : []
 
       for (const gamepad of gamepads) {
@@ -591,11 +593,11 @@ export const useGamepadNavigation = () => {
       return false
     }
 
-    function findNextKeyboardButtonInRow(
+    const findNextKeyboardButtonInRow = (
       current: HTMLElement,
       direction: 'left' | 'right',
       allCandidates: HTMLElement[]
-    ): HTMLElement | null {
+    ): HTMLElement | null => {
       const keyboardRow = current.closest('.on-screen-keyboard__row')
       if (!keyboardRow) return null
 
@@ -616,7 +618,7 @@ export const useGamepadNavigation = () => {
       return null
     }
 
-    function moveFocus(direction: GamepadDirection): void {
+    const moveFocus = (direction: GamepadDirection): void => {
       const activeTrap = getTopVisibleFocusTrap()
       const candidates = getFocusableElements(activeTrap ?? document)
 
@@ -760,7 +762,7 @@ export const useGamepadNavigation = () => {
       }
     }
 
-    function activateFocusedElement(): void {
+    const activateFocusedElement = (): void => {
       const activeElement = document.activeElement as HTMLElement | null
 
       if (!activeElement) {
@@ -857,5 +859,5 @@ export const useGamepadNavigation = () => {
       window.removeEventListener('focusin', handleFocusIn)
       window.cancelAnimationFrame(frameId)
     }
-  }, [setKeyboardTarget, setShowOnScreenKeyboard])
+  }, [inputKeyboardMode, setKeyboardTarget, setShowOnScreenKeyboard])
 }

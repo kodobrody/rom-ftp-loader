@@ -8,13 +8,15 @@ import {
   faTrashCan
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Input } from '@heroui/react'
+import { Button, Card, Input, Label, ListBox, Select } from '@heroui/react'
 import React, { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import type { InputKeyboardMode } from '../../../shared/types'
 import { SetupConnectionModal } from '../components/modals/SetupConnectionModal'
 import { SetupDeleteConfirmModal } from '../components/modals/SetupDeleteConfirmModal'
 import { SetupIgdbModal } from '../components/modals/SetupIgdbModal'
 import { useAppStateStore } from '../store/appStateStore'
+import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
 import { useSetupStore } from '../store/setupStore'
 
 export const SetupScreen = (): React.JSX.Element => {
@@ -27,6 +29,7 @@ export const SetupScreen = (): React.JSX.Element => {
     persistConfig,
     updateConfig
   } = useSetupStore()
+  const { setKeyboardTarget, setShowOnScreenKeyboard } = useKeyboardModalStore()
   const { setErrorMessage, setInfoMessage } = useAppStateStore()
   const navigate = useNavigate()
   const [showConnectionModal, setShowConnectionModal] = useState(false)
@@ -35,25 +38,46 @@ export const SetupScreen = (): React.JSX.Element => {
   const [showDeleteIgdbModal, setShowDeleteIgdbModal] = useState(false)
 
   const ftpParts = useMemo(() => {
+    const isHttpService =
+      config.fileServiceType === 'nextcloud' || config.fileServiceType === 'romm'
+
     if (!config.ftpUrl.trim()) {
-      return { protocol: 'ftp' as const, hostname: '', port: '21', path: '/' }
+      return {
+        protocol: isHttpService ? ('https' as const) : ('ftp' as const),
+        hostname: '',
+        port: isHttpService ? '443' : '21',
+        path: '/'
+      }
     }
 
     try {
-      const normalizedUrl = config.ftpUrl.includes('://') ? config.ftpUrl : `ftp://${config.ftpUrl}`
+      const fallbackProtocol = isHttpService ? 'https' : 'ftp'
+      const normalizedUrl = config.ftpUrl.includes('://')
+        ? config.ftpUrl
+        : `${fallbackProtocol}://${config.ftpUrl}`
       const parsedUrl = new URL(normalizedUrl)
 
       return {
-        protocol: parsedUrl.protocol.replace(':', '') as 'ftp' | 'ftps' | 'sftp',
+        protocol: parsedUrl.protocol.replace(':', ''),
         hostname: parsedUrl.hostname,
-        port: parsedUrl.port || '21',
+        port: parsedUrl.port || (isHttpService ? '443' : '21'),
         path: parsedUrl.pathname || '/'
       }
     } catch {
-      return { protocol: 'ftp' as const, hostname: config.ftpUrl, port: '21', path: '/' }
+      return {
+        protocol: isHttpService ? ('https' as const) : ('ftp' as const),
+        hostname: config.ftpUrl,
+        port: isHttpService ? '443' : '21',
+        path: '/'
+      }
     }
-  }, [config.ftpUrl])
-  const hasConnection = Boolean(config.ftpUrl && config.ftpUsername && config.ftpPassword)
+  }, [config.fileServiceType, config.ftpUrl])
+  const hasConnection = Boolean(
+    config.ftpUrl &&
+    (config.fileServiceType === 'romm'
+      ? config.rommApiToken
+      : config.ftpUsername && config.ftpPassword)
+  )
   const hasIgdbConnection = Boolean(config.twitchClientId && config.twitchClientSecret)
 
   const openConnectionModal = (): void => {
@@ -71,9 +95,11 @@ export const SetupScreen = (): React.JSX.Element => {
   const handleDeleteConnection = async (): Promise<void> => {
     const savedConfig = await persistConfig(
       {
+        fileServiceType: 'ftp',
         ftpUrl: '',
         ftpUsername: '',
-        ftpPassword: ''
+        ftpPassword: '',
+        rommApiToken: ''
       },
       { refreshLibrary: true }
     )
@@ -99,6 +125,15 @@ export const SetupScreen = (): React.JSX.Element => {
     }
   }
 
+  const handleTextInputClick = (event: React.MouseEvent<HTMLInputElement>): void => {
+    if (config.inputKeyboardMode !== 'always') {
+      return
+    }
+
+    setKeyboardTarget(event.currentTarget)
+    setShowOnScreenKeyboard(true)
+  }
+
   return (
     <section className="setup-layout grid gap-4">
       <div className="grid gap-3">
@@ -114,158 +149,165 @@ export const SetupScreen = (): React.JSX.Element => {
         </Button>
         <h1 className="text-3xl font-semibold text-zinc-100">Setup</h1>
       </div>
+      <div className="grid gap-4 w-full max-w-5xl mx-auto">
+        <div className="grid gap-2">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <span className="text-sm text-zinc-300">Config loader (optional)</span>
+            <Button
+              autoFocus
+              isDisabled={configFileLoading}
+              onPress={() => {
+                void loadConfigFromFile()
+              }}
+              variant="tertiary"
+            >
+              {configFileLoading ? 'Loading...' : 'Load config from file'}
+            </Button>
+          </div>
+        </div>
 
-      <Card>
-        <Card.Content className="flex flex-col items-center gap-4 p-5 max-w-5xl mx-auto w-full">
-          <div className="grid gap-4 w-full">
-            <div className="grid gap-2">
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                <span className="text-sm text-zinc-300">Config loader (optional)</span>
+        <div className="grid gap-2">
+          <label className="grid gap-1">
+            <span className="text-sm text-zinc-300">Local game path</span>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+              <Input
+                className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onClick={handleTextInputClick}
+                value={config.romsDirectory}
+                onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
+                onBlur={(event) => {
+                  const nextPath = event.target.value.trim()
+
+                  if (nextPath !== config.romsDirectory) {
+                    void persistConfig({ romsDirectory: nextPath }, { refreshLibrary: true })
+                  }
+                }}
+                placeholder="C:\\Roms"
+              />
+              <Button
+                isDisabled={directoryPicking}
+                onPress={() => {
+                  void pickDirectory()
+                }}
+                variant="primary"
+              >
+                <FontAwesomeIcon icon={faFolder} />
+                {directoryPicking ? 'Picking...' : 'Pick directory'}
+              </Button>
+            </div>
+          </label>
+        </div>
+
+        {!hasConnection ? (
+          <Button
+            className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+            onPress={openConnectionModal}
+            variant="tertiary"
+          >
+            <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+            <span className="text-zinc-400">Add File Service Connection</span>
+          </Button>
+        ) : (
+          <Card className="bg-white/5">
+            <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                  <FontAwesomeIcon icon={faServer} />
+                </div>
+                <div className="min-w-0">
+                  <strong className="block truncate text-base text-zinc-100">
+                    {ftpParts.hostname}
+                  </strong>
+                  <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                    {config.fileServiceType}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
                 <Button
-                  autoFocus
-                  isDisabled={configFileLoading}
-                  onPress={() => {
-                    void loadConfigFromFile()
-                  }}
+                  aria-label="Edit connection"
+                  className="px-3"
+                  onPress={openConnectionModal}
                   variant="tertiary"
                 >
-                  {configFileLoading ? 'Loading...' : 'Load config from file'}
+                  <FontAwesomeIcon icon={faPenToSquare} />
+                  Edit
+                </Button>
+                <Button
+                  aria-label="Delete connection"
+                  className="px-3"
+                  onPress={() => {
+                    setShowDeleteConnectionModal(true)
+                  }}
+                  variant="danger"
+                >
+                  <FontAwesomeIcon icon={faTrashCan} />
+                  Delete
                 </Button>
               </div>
-            </div>
+            </Card.Content>
+          </Card>
+        )}
 
-            <div className="grid gap-2">
-              <label className="grid gap-1">
-                <span className="text-sm text-zinc-300">Local game path</span>
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-                  <Input
-                    className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={config.romsDirectory}
-                    onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
-                    onBlur={(event) => {
-                      const nextPath = event.target.value.trim()
-
-                      if (nextPath !== config.romsDirectory) {
-                        void persistConfig({ romsDirectory: nextPath }, { refreshLibrary: true })
-                      }
-                    }}
-                    placeholder="C:\\Roms"
-                  />
-                  <Button
-                    isDisabled={directoryPicking}
-                    onPress={() => {
-                      void pickDirectory()
-                    }}
-                    variant="primary"
-                  >
-                    <FontAwesomeIcon icon={faFolder} />
-                    {directoryPicking ? 'Picking...' : 'Pick directory'}
-                  </Button>
+        {!hasIgdbConnection ? (
+          <Button
+            className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+            onPress={openIgdbModal}
+            variant="tertiary"
+          >
+            <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+            <span className="text-zinc-400">Add IGDB Connection</span>
+          </Button>
+        ) : (
+          <Card className="bg-white/5">
+            <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                  <FontAwesomeIcon icon={faImage} />
                 </div>
-              </label>
-            </div>
-
-            {!hasConnection ? (
-              <Button
-                className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
-                onPress={openConnectionModal}
-                variant="tertiary"
-              >
-                <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
-                <span className="text-zinc-400">Add File Service Connection</span>
-              </Button>
-            ) : (
-              <Card className="bg-white/5">
-                <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
-                      <FontAwesomeIcon icon={faServer} />
-                    </div>
-                    <div className="min-w-0">
-                      <strong className="block truncate text-base text-zinc-100">
-                        {ftpParts.hostname}
-                      </strong>
-                      <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
-                        {ftpParts.protocol}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      aria-label="Edit connection"
-                      className="px-3"
-                      onPress={openConnectionModal}
-                      variant="tertiary"
-                    >
-                      <FontAwesomeIcon icon={faPenToSquare} />
-                      Edit
-                    </Button>
-                    <Button
-                      aria-label="Delete connection"
-                      className="px-3"
-                      onPress={() => {
-                        setShowDeleteConnectionModal(true)
-                      }}
-                      variant="danger"
-                    >
-                      <FontAwesomeIcon icon={faTrashCan} />
-                      Delete
-                    </Button>
-                  </div>
-                </Card.Content>
-              </Card>
-            )}
-
-            {!hasIgdbConnection ? (
-              <Button
-                className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
-                onPress={openIgdbModal}
-                variant="tertiary"
-              >
-                <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
-                <span className="text-zinc-400">Add IGDB Connection</span>
-              </Button>
-            ) : (
-              <Card className="bg-white/5">
-                <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
-                      <FontAwesomeIcon icon={faImage} />
-                    </div>
-                    <div className="min-w-0">
-                      <strong className="block truncate text-base text-zinc-100">
-                        IGDB (Twitch API)
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      aria-label="Edit IGDB connection"
-                      className="px-3"
-                      onPress={openIgdbModal}
-                      variant="tertiary"
-                    >
-                      <FontAwesomeIcon icon={faPenToSquare} />
-                      Edit
-                    </Button>
-                    <Button
-                      aria-label="Delete IGDB connection"
-                      className="px-3"
-                      onPress={() => {
-                        setShowDeleteIgdbModal(true)
-                      }}
-                      variant="danger"
-                    >
-                      <FontAwesomeIcon icon={faTrashCan} />
-                      Delete
-                    </Button>
-                  </div>
-                </Card.Content>
-              </Card>
-            )}
-          </div>
-        </Card.Content>
-      </Card>
+                <div className="min-w-0">
+                  <strong className="block truncate text-base text-zinc-100">
+                    IGDB (Twitch API)
+                  </strong>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  aria-label="Edit IGDB connection"
+                  className="px-3"
+                  onPress={openIgdbModal}
+                  variant="tertiary"
+                >
+                  <FontAwesomeIcon icon={faPenToSquare} />
+                  Edit
+                </Button>
+                <Button
+                  aria-label="Delete IGDB connection"
+                  className="px-3"
+                  onPress={() => {
+                    setShowDeleteIgdbModal(true)
+                  }}
+                  variant="danger"
+                >
+                  <FontAwesomeIcon icon={faTrashCan} />
+                  Delete
+                </Button>
+              </div>
+            </Card.Content>
+          </Card>
+        )}
+        <div className="flex items-center justify-end">
+          <label className="grid gap-1">
+            <ControllerlessKeyboardModeSelect
+              value={config.inputKeyboardMode}
+              onChange={(mode) => {
+                updateConfig({ inputKeyboardMode: mode })
+                void persistConfig({ inputKeyboardMode: mode })
+              }}
+            />
+          </label>
+        </div>
+      </div>
 
       <SetupConnectionModal isOpen={showConnectionModal} onClose={closeConnectionModal} />
 
@@ -300,5 +342,45 @@ export const SetupScreen = (): React.JSX.Element => {
         }}
       />
     </section>
+  )
+}
+
+interface KeyboardModeSelectProps {
+  value: InputKeyboardMode
+  onChange: (mode: InputKeyboardMode) => void
+}
+
+const ControllerlessKeyboardModeSelect = ({
+  value,
+  onChange
+}: KeyboardModeSelectProps): React.JSX.Element => {
+  return (
+    <Select
+      className="w-fit"
+      aria-label="Show keyboard for inputs"
+      selectedKey={value}
+      onSelectionChange={(selection) => {
+        const nextMode = selection === 'always' ? 'always' : 'gamepad'
+        onChange(nextMode)
+      }}
+    >
+      <Label>Show keyboard for inputs</Label>
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
+        <ListBox>
+          <ListBox.Item id="always" textValue="Always">
+            Always
+            <ListBox.ItemIndicator />
+          </ListBox.Item>
+          <ListBox.Item id="gamepad" textValue="When entered with gamepad">
+            When entered with gamepad
+            <ListBox.ItemIndicator />
+          </ListBox.Item>
+        </ListBox>
+      </Select.Popover>
+    </Select>
   )
 }

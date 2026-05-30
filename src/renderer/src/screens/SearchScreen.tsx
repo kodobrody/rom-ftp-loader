@@ -1,12 +1,13 @@
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip } from '@heroui/react'
+import { Button, Card, Chip, Input } from '@heroui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { OnScreenKeyboard } from '../components/OnScreenKeyboard'
 import { useLibraryStore } from '../store/libraryStore'
 import { useSearchStore } from '../store/searchStore'
+import { useSetupStore } from '../store/setupStore'
 import { fuzzyScore, type SearchIndexEntry } from '../utils/search'
 
 const makeSearchEntryKey = (entry: SearchIndexEntry): string => {
@@ -15,6 +16,7 @@ const makeSearchEntryKey = (entry: SearchIndexEntry): string => {
 
 export const SearchScreen = (): React.JSX.Element => {
   const visiblePlatforms = useLibraryStore((store) => store.visiblePlatforms)
+  const inputKeyboardMode = useSetupStore((store) => store.config.inputKeyboardMode)
   const navigate = useNavigate()
   const {
     applyKeyboardKey,
@@ -23,6 +25,8 @@ export const SearchScreen = (): React.JSX.Element => {
     onScreenKeyboardRef,
     openSearchResultInModal,
     resetSearchSession,
+    setShowOnScreenKeyboard,
+    setSearchQuery,
     searchInputRef,
     searchQuery,
     showOnScreenKeyboard
@@ -83,6 +87,23 @@ export const SearchScreen = (): React.JSX.Element => {
 
       <Card className={showOnScreenKeyboard ? 'pb-2' : ''}>
         <Card.Content className="grid gap-3 p-4">
+          <Input
+            className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+            onChange={(event) => {
+              setSearchQuery(event.target.value)
+            }}
+            onClick={() => {
+              if (inputKeyboardMode === 'always') {
+                setShowOnScreenKeyboard(true)
+              }
+            }}
+            placeholder="Search games..."
+            ref={(element) => {
+              searchInputRef.current = element
+            }}
+            value={searchQuery}
+          />
+
           {searchIndexQuery.isLoading ? (
             <p className="grid min-h-24 place-items-center text-center text-sm text-zinc-400">
               Preparing search index...
@@ -144,6 +165,7 @@ export const SearchScreen = (): React.JSX.Element => {
               onKeyPress={applyKeyboardKey}
               ref={onScreenKeyboardRef}
               rows={keyboardRows}
+              showPreview={inputKeyboardMode === 'gamepad'}
               targetRef={searchInputRef}
             />
           ) : null}

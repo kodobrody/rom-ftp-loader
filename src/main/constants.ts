@@ -189,9 +189,12 @@ export const emptyConfig = (): AppConfig => ({
   twitchClientId: '',
   twitchAccessToken: '',
   twitchClientSecret: '',
+  fileServiceType: 'ftp',
   ftpUrl: '',
   ftpUsername: '',
-  ftpPassword: ''
+  ftpPassword: '',
+  rommApiToken: '',
+  inputKeyboardMode: 'gamepad'
 })
 
 export const emptySnapshot = (): DownloadSnapshot => ({
