@@ -2245,6 +2245,16 @@ ipcMain.handle('downloads:clear-history', async () => clearDownloadQueueHistory(
 
 ipcMain.handle('downloads:get-state', async () => currentDownloadSnapshot)
 
+const resolveWindowIconPath = (): string => {
+  const developmentIconPath = join(__dirname, '../../resources/icon.png')
+
+  if (existsSync(developmentIconPath)) {
+    return developmentIconPath
+  }
+
+  return join(process.resourcesPath, 'icon.png')
+}
+
 const createWindow = (): void => {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -2257,7 +2267,7 @@ const createWindow = (): void => {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     },
-    icon: join(__dirname, '../resources/icon.png')
+    icon: resolveWindowIconPath()
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -2277,7 +2287,7 @@ const createWindow = (): void => {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.romloader.app')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
