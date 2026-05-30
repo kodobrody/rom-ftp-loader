@@ -1,11 +1,11 @@
-import type { GameEntry, GameMetadataUpdate, PlatformSummary } from '../../../shared/types'
+import type { GameEntry, PlatformSummary } from '../../../shared/types'
 
 export type SearchIndexEntry = {
   platform: PlatformSummary
   game: GameEntry
 }
 
-export const normalizeSearchText = (value: string): string => {
+const normalizeSearchText = (value: string): string => {
   return value.toLowerCase().trim()
 }
 
@@ -42,20 +42,4 @@ export const fuzzyScore = (query: string, candidate: string): number => {
   }
 
   return score - (text.length - q.length) * 0.35
-}
-
-export const isGameMetadataUpdate = (value: unknown): value is GameMetadataUpdate => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const candidate = value as Partial<GameMetadataUpdate>
-
-  return (
-    typeof candidate.romFileName === 'string' &&
-    typeof candidate.displayName === 'string' &&
-    typeof candidate.cleanedName === 'string' &&
-    (typeof candidate.coverUrl === 'string' || candidate.coverUrl === null) &&
-    (candidate.status === 'found' || candidate.status === 'missing' || candidate.status === 'error')
-  )
 }

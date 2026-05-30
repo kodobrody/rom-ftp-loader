@@ -10,18 +10,7 @@ import { useSetupStore } from '../../store/setupStore'
 
 type HttpProtocol = 'http' | 'https'
 
-export type ConnectionProtocol = 'ftp' | 'ftps' | 'sftp' | 'http' | 'https'
-
-export interface ConnectionDraft {
-  serviceType: FileServiceType
-  protocol: ConnectionProtocol
-  hostname: string
-  port: string
-  path: string
-  username: string
-  password: string
-  apiToken: string
-}
+type ConnectionProtocol = 'ftp' | 'ftps' | 'sftp' | 'http' | 'https'
 
 const normalizePathInput = (pathInput: string): string => {
   const trimmed = pathInput.trim()
