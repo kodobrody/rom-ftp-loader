@@ -89,30 +89,3 @@ Use one of the aliases below as your folder name.
 | Sega CD                       | segacd, megacd                                     |
 | Sega Saturn                   | saturn, segasaturn                                 |
 | Dreamcast                     | dreamcast, segadreamcast, dc                       |
-
-## Project
-
-- Language: TypeScript, React, Electron
-- UI: React + Vite + Tailwind CSS
-- Build: Electron Builder
-
-## Notes
-
-- For HTTP endpoints, network security policy may be required depending on OS and configuration.
-- If a remote service is unreachable, verify protocol, host, port, and network reachability first.
-
-## Example Config File
-
-You can provide a config file like this (see `SAMPLE_CONFIG.json`):
-
-```json
-{
-  "romsDirectory": "C:/Roms",
-  "fileServiceType": "sftp",
-  "ftpUrl": "example.com",
-  "ftpUsername": "myuser",
-  "ftpPassword": "mypassword",
-  "twitchClientId": "your-twitch-client-id",
-  "twitchClientSecret": "your-twitch-client-secret"
-}
-```
