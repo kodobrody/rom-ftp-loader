@@ -12,7 +12,6 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
-  MetadataRefreshResult,
   PlatformSummary
 } from '../shared/types'
 import {
@@ -445,6 +444,11 @@ const resolveTwitchAccessToken = async (config: AppConfig): Promise<string> => {
   return accessToken
 }
 
+const testTwitchConnection = async (config: AppConfig): Promise<boolean> => {
+  await resolveTwitchAccessToken(config)
+  return true
+}
+
 const sanitizeConfig = (config: Partial<AppConfig>): AppConfig => {
   return {
     romsDirectory: config.romsDirectory?.trim() ?? '',
@@ -468,6 +472,10 @@ const readConfigFromDisk = async (): Promise<AppConfig> => {
 
 const saveConfigToDisk = async (config: Partial<AppConfig>): Promise<AppConfig> => {
   const nextConfig = sanitizeConfig(config)
+
+  if (nextConfig.twitchClientId || nextConfig.twitchClientSecret) {
+    await testTwitchConnection(nextConfig)
+  }
 
   await mkdir(app.getPath('userData'), { recursive: true })
   await writeFile(getConfigPath(), JSON.stringify(nextConfig, null, 2), 'utf8')
@@ -873,30 +881,6 @@ const listGames = async (
       return left.name.localeCompare(right.name)
     })
   })
-}
-
-const fetchMissingMetadataForAllPlatforms = async (
-  config: AppConfig
-): Promise<MetadataRefreshResult> => {
-  const platforms = await listPlatforms(config)
-  let romsFetched = 0
-
-  for (const platform of platforms) {
-    const before = await readMetadataCache()
-    const beforeCount = Object.keys(before.entries).length
-    await listGames(config, platform.sourceName, {
-      fetchMissingMetadata: true,
-      forceRefetchMetadata: false
-    })
-    const after = await readMetadataCache()
-    const afterCount = Object.keys(after.entries).length
-    romsFetched += Math.max(0, afterCount - beforeCount)
-  }
-
-  return {
-    platformsProcessed: platforms.length,
-    romsFetched
-  }
 }
 
 const fetchMetadataForSingleGame = async (
@@ -1412,7 +1396,36 @@ ipcMain.handle('app:pick-directory', async () => {
     return null
   }
 
-  return result.filePaths[0]
+  const directoryPath = result.filePaths[0]
+  const testFilePath = join(directoryPath, `.games2-write-test-${Date.now()}.tmp`)
+  const testBuffer = Buffer.alloc(1024)
+
+  try {
+    await writeFile(testFilePath, testBuffer)
+
+    const fileContents = await readFile(testFilePath)
+
+    if (fileContents.length !== testBuffer.length) {
+      throw new Error('Read verification failed.')
+    }
+
+    await unlink(testFilePath)
+    return directoryPath
+  } catch (error) {
+    try {
+      if (existsSync(testFilePath)) {
+        await unlink(testFilePath)
+      }
+    } catch {
+      // Ignore cleanup failures and surface the original validation error.
+    }
+
+    throw new Error(
+      error instanceof Error
+        ? `Directory access test failed: ${error.message}`
+        : 'Directory access test failed.'
+    )
+  }
 })
 
 ipcMain.handle('app:pick-config-file', async () => {
@@ -1506,6 +1519,10 @@ ipcMain.handle('system:open-onscreen-keyboard', async () => {
   }
 })
 
+ipcMain.handle('app:test-twitch-connection', async (_event, config: AppConfig) => {
+  return testTwitchConnection(config)
+})
+
 ipcMain.handle('library:list-platforms', async () => {
   const config = await readConfigFromDisk()
   assertConfigured(config)
@@ -1540,12 +1557,6 @@ ipcMain.handle('library:delete-local-file', async (_event, localPath: string) =>
   } catch {
     return false
   }
-})
-
-ipcMain.handle('metadata:fetch-missing-all-platforms', async () => {
-  const config = await readConfigFromDisk()
-  assertConfigured(config)
-  return fetchMissingMetadataForAllPlatforms(config)
 })
 
 ipcMain.handle(

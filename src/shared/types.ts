@@ -50,11 +50,6 @@ export interface GameMetadataUpdate {
   status: 'found' | 'missing' | 'error'
 }
 
-export interface MetadataRefreshResult {
-  platformsProcessed: number
-  romsFetched: number
-}
-
 export type DownloadQueueItemStatus = 'queued' | 'downloading' | 'completed' | 'error'
 
 export interface DownloadQueueItem {

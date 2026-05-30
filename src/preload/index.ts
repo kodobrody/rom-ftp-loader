@@ -5,7 +5,6 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
-  MetadataRefreshResult,
   PlatformSummary
 } from '../shared/types'
 
@@ -22,6 +21,8 @@ const api = {
     ipcRenderer.invoke('app:load-config-from-file', filePath) as Promise<AppConfig>,
   testFtpConnection: (config: AppConfig) =>
     ipcRenderer.invoke('app:test-ftp-connection', config) as Promise<boolean>,
+  testTwitchConnection: (config: AppConfig) =>
+    ipcRenderer.invoke('app:test-twitch-connection', config) as Promise<boolean>,
   listPlatforms: () => ipcRenderer.invoke('library:list-platforms') as Promise<PlatformSummary[]>,
   listGames: (
     platformName: string,
@@ -29,8 +30,6 @@ const api = {
   ) => ipcRenderer.invoke('library:list-games', platformName, options) as Promise<GameEntry[]>,
   deleteLocalFile: (localPath: string) =>
     ipcRenderer.invoke('library:delete-local-file', localPath) as Promise<boolean>,
-  fetchMissingMetadataAllPlatforms: () =>
-    ipcRenderer.invoke('metadata:fetch-missing-all-platforms') as Promise<MetadataRefreshResult>,
   fetchGameMetadata: (platformName: string, romFileName: string, forceRefetch?: boolean) =>
     ipcRenderer.invoke(
       'metadata:fetch-game',

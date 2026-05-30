@@ -1,10 +1,10 @@
-import { faFloppyDisk, faFolder, faServer } from '@fortawesome/free-solid-svg-icons'
+import { faFolder, faImage, faPenToSquare, faPlus, faServer, faTrashCan } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip, Input, Label, ListBox, Select } from '@heroui/react'
-import React, { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Button, Card, Input, Label, ListBox, Modal, Select } from '@heroui/react'
+import React, { useMemo, useState } from 'react'
+import type { AppConfig } from '../../../shared/types'
+import { useAppStateStore } from '../store/appStateStore'
 import { useSetupStore } from '../store/setupStore'
-import { hasRequiredSetup } from '../utils/formatting'
 
 const normalizePathInput = (pathInput: string): string => {
   const trimmed = pathInput.trim()
@@ -105,30 +105,200 @@ const buildFtpUrl = (
   return `${protocol}://${hostname}${portSegment}${path}`
 }
 
+interface ConnectionDraft {
+  protocol: ConnectionProtocol
+  hostname: string
+  port: string
+  path: string
+  username: string
+  password: string
+}
+
+const createConnectionDraft = (config: AppConfig): ConnectionDraft => {
+  const ftpParts = parseFtpParts(config.ftpUrl)
+
+  return {
+    ...ftpParts,
+    username: config.ftpUsername,
+    password: config.ftpPassword
+  }
+}
+
+interface IgdbDraft {
+  clientId: string
+  clientSecret: string
+}
+
+const createIgdbDraft = (config: AppConfig): IgdbDraft => ({
+  clientId: config.twitchClientId,
+  clientSecret: config.twitchClientSecret
+})
+
 export const SetupScreen = (): React.JSX.Element => {
-  const navigate = useNavigate()
   const {
     config,
     configFileLoading,
     directoryPicking,
-    ftpTesting,
     loadConfigFromFile,
     pickDirectory,
-    saveConfig,
-    saving,
-    testFtpConnection,
+    persistConfig,
     updateConfig
   } = useSetupStore()
+  const { setErrorMessage, setInfoMessage } = useAppStateStore()
+  const [showConnectionModal, setShowConnectionModal] = useState(false)
+  const [showDeleteConnectionModal, setShowDeleteConnectionModal] = useState(false)
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>(() =>
+    createConnectionDraft(config)
+  )
+  const [connectionModalError, setConnectionModalError] = useState<string | null>(null)
+  const [connectionSaving, setConnectionSaving] = useState(false)
+  const [showIgdbModal, setShowIgdbModal] = useState(false)
+  const [showDeleteIgdbModal, setShowDeleteIgdbModal] = useState(false)
+  const [igdbDraft, setIgdbDraft] = useState<IgdbDraft>(() => createIgdbDraft(config))
+  const [igdbModalError, setIgdbModalError] = useState<string | null>(null)
+  const [igdbSaving, setIgdbSaving] = useState(false)
 
-  const setupReady = useMemo(() => hasRequiredSetup(config), [config])
   const twitchReady = Boolean(config.twitchClientId && config.twitchClientSecret)
   const ftpParts = useMemo(() => parseFtpParts(config.ftpUrl), [config.ftpUrl])
+  const hasConnection = Boolean(config.ftpUrl && config.ftpUsername && config.ftpPassword)
+  const hasIgdbConnection = Boolean(config.twitchClientId && config.twitchClientSecret)
+  const igdbDraftReady = Boolean(igdbDraft.clientId.trim() && igdbDraft.clientSecret.trim())
 
-  const handleSaveSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
-    const saved = await saveConfig(event)
+  const openConnectionModal = (): void => {
+    setConnectionDraft(createConnectionDraft(config))
+    setConnectionModalError(null)
+    setShowConnectionModal(true)
+  }
 
-    if (saved) {
-      navigate('/')
+  const closeConnectionModal = (): void => {
+    if (connectionSaving) {
+      return
+    }
+
+    setConnectionModalError(null)
+    setShowConnectionModal(false)
+  }
+
+  const handleSaveConnection = async (): Promise<void> => {
+    const nextConfig = {
+      ...config,
+      ftpUrl: buildFtpUrl(
+        connectionDraft.protocol,
+        connectionDraft.hostname,
+        connectionDraft.port,
+        connectionDraft.path
+      ),
+      ftpUsername: connectionDraft.username.trim(),
+      ftpPassword: connectionDraft.password
+    }
+
+    if (!nextConfig.ftpUrl || !nextConfig.ftpUsername || !nextConfig.ftpPassword) {
+      setConnectionModalError('Fill in hostname, username, and password to connect.')
+      return
+    }
+
+    setConnectionSaving(true)
+    setConnectionModalError(null)
+    setErrorMessage(null)
+    setInfoMessage(null)
+
+    try {
+      await window.api.testFtpConnection(nextConfig)
+      const savedConfig = await persistConfig({
+        ftpUrl: nextConfig.ftpUrl,
+        ftpUsername: nextConfig.ftpUsername,
+        ftpPassword: nextConfig.ftpPassword
+      }, { refreshLibrary: true })
+
+      if (savedConfig) {
+        setShowConnectionModal(false)
+      }
+    } catch (error) {
+      setConnectionModalError(
+        error instanceof Error ? error.message : 'Failed to connect to the selected service.'
+      )
+    } finally {
+      setConnectionSaving(false)
+    }
+  }
+
+  const handleDeleteConnection = async (): Promise<void> => {
+    const savedConfig = await persistConfig({
+      ftpUrl: '',
+      ftpUsername: '',
+      ftpPassword: ''
+    }, { refreshLibrary: true })
+
+    if (savedConfig) {
+      setErrorMessage(null)
+      setInfoMessage(null)
+      setShowDeleteConnectionModal(false)
+    }
+  }
+
+  const openIgdbModal = (): void => {
+    setIgdbDraft(createIgdbDraft(config))
+    setIgdbModalError(null)
+    setShowIgdbModal(true)
+  }
+
+  const closeIgdbModal = (): void => {
+    if (igdbSaving) {
+      return
+    }
+
+    setIgdbModalError(null)
+    setShowIgdbModal(false)
+  }
+
+  const handleSaveIgdbConnection = async (): Promise<void> => {
+    const nextConfig = {
+      ...config,
+      twitchClientId: igdbDraft.clientId.trim(),
+      twitchClientSecret: igdbDraft.clientSecret.trim(),
+      twitchAccessToken: ''
+    }
+
+    if (!nextConfig.twitchClientId || !nextConfig.twitchClientSecret) {
+      setIgdbModalError('Fill in Client ID and Client Secret to connect.')
+      return
+    }
+
+    setIgdbSaving(true)
+    setIgdbModalError(null)
+    setErrorMessage(null)
+    setInfoMessage(null)
+
+    try {
+      const savedConfig = await persistConfig({
+        twitchClientId: nextConfig.twitchClientId,
+        twitchClientSecret: nextConfig.twitchClientSecret,
+        twitchAccessToken: ''
+      })
+
+      if (savedConfig) {
+        setShowIgdbModal(false)
+      }
+    } catch (error) {
+      setIgdbModalError(
+        error instanceof Error ? error.message : 'Failed to connect to IGDB via Twitch API.'
+      )
+    } finally {
+      setIgdbSaving(false)
+    }
+  }
+
+  const handleDeleteIgdbConnection = async (): Promise<void> => {
+    const savedConfig = await persistConfig({
+      twitchClientId: '',
+      twitchClientSecret: '',
+      twitchAccessToken: ''
+    })
+
+    if (savedConfig) {
+      setErrorMessage(null)
+      setInfoMessage(null)
+      setShowDeleteIgdbModal(false)
     }
   }
 
@@ -165,10 +335,10 @@ export const SetupScreen = (): React.JSX.Element => {
 
       <Card>
         <Card.Content className="grid gap-4 p-5">
-          <form className="grid gap-4" onSubmit={(event) => void handleSaveSubmit(event)}>
-            <section className="grid gap-3 rounded-xl bg-white/5 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Config loader (Optional)</p>
-              <div className="flex flex-wrap gap-3">
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                <span className="text-sm text-zinc-300">Config loader (optional)</span>
                 <Button
                   autoFocus
                   isDisabled={configFileLoading}
@@ -180,49 +350,178 @@ export const SetupScreen = (): React.JSX.Element => {
                   {configFileLoading ? 'Loading...' : 'Load config from file'}
                 </Button>
               </div>
-            </section>
+            </div>
 
-            <section className="grid gap-3 rounded-xl bg-white/5 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">ROM directory</p>
+            <div className="grid gap-2">
               <label className="grid gap-1">
-                <span className="text-sm text-zinc-300">ROM directory</span>
-                <Input
-                  className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                  value={config.romsDirectory}
-                  onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
-                  placeholder="C:\\Roms"
-                />
-              </label>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  isDisabled={directoryPicking}
-                  onPress={() => {
-                    void pickDirectory()
-                  }}
-                  variant="tertiary"
-                >
-                  <FontAwesomeIcon icon={faFolder} />
-                  {directoryPicking ? 'Picking...' : 'Pick directory'}
-                </Button>
-              </div>
-            </section>
+                <span className="text-sm text-zinc-300">Local game path</span>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                  <Input
+                    className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                    value={config.romsDirectory}
+                    onChange={(event) => updateConfig({ romsDirectory: event.target.value })}
+                    onBlur={(event) => {
+                      const nextPath = event.target.value.trim()
 
-            <section className="grid gap-3 rounded-xl bg-white/5 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Server connection</p>
+                      if (nextPath !== config.romsDirectory) {
+                        void persistConfig(
+                          { romsDirectory: nextPath },
+                          { refreshLibrary: true }
+                        )
+                      }
+                    }}
+                    placeholder="C:\\Roms"
+                  />
+                  <Button
+                    isDisabled={directoryPicking}
+                    onPress={() => {
+                      void pickDirectory()
+                    }}
+                    variant="primary"
+                  >
+                    <FontAwesomeIcon icon={faFolder} />
+                    {directoryPicking ? 'Picking...' : 'Pick directory'}
+                  </Button>
+                </div>
+              </label>
+            </div>
+
+            {!hasConnection ? (
+              <Button
+                className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+                onPress={openConnectionModal}
+                variant="tertiary"
+              >
+                <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+                <span className="text-zinc-400">Add File Service Connection</span>
+              </Button>
+            ) : (
+              <Card className="bg-white/5">
+                <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                      <FontAwesomeIcon icon={faServer} />
+                    </div>
+                    <div className="min-w-0">
+                      <strong className="block truncate text-base text-zinc-100">{ftpParts.hostname}</strong>
+                      <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                        {ftpParts.protocol}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      aria-label="Edit connection"
+                      className="px-3"
+                      onPress={openConnectionModal}
+                      variant="tertiary"
+                    >
+                      <FontAwesomeIcon icon={faPenToSquare} />
+                      Edit
+                    </Button>
+                    <Button
+                      aria-label="Delete connection"
+                      className="px-3"
+                      onPress={() => {
+                        setShowDeleteConnectionModal(true)
+                      }}
+                      variant="danger"
+                    >
+                      <FontAwesomeIcon icon={faTrashCan} />
+                      Delete
+                    </Button>
+                  </div>
+                </Card.Content>
+              </Card>
+            )}
+
+            {!hasIgdbConnection ? (
+              <Button
+                className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+                onPress={openIgdbModal}
+                variant="tertiary"
+              >
+                <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+                <span className="text-zinc-400">Add IGDB Connection</span>
+              </Button>
+            ) : (
+              <Card className="bg-white/5">
+                <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                      <FontAwesomeIcon icon={faImage} />
+                    </div>
+                    <div className="min-w-0">
+                      <strong className="block truncate text-base text-zinc-100">IGDB (Twitch API)</strong>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      aria-label="Edit IGDB connection"
+                      className="px-3"
+                      onPress={openIgdbModal}
+                      variant="tertiary"
+                    >
+                      <FontAwesomeIcon icon={faPenToSquare} />
+                      Edit
+                    </Button>
+                    <Button
+                      aria-label="Delete IGDB connection"
+                      className="px-3"
+                      onPress={() => {
+                        setShowDeleteIgdbModal(true)
+                      }}
+                      variant="danger"
+                    >
+                      <FontAwesomeIcon icon={faTrashCan} />
+                      Delete
+                    </Button>
+                  </div>
+                </Card.Content>
+              </Card>
+            )}
+
+          </div>
+        </Card.Content>
+      </Card>
+
+      <Modal.Backdrop
+        isOpen={showConnectionModal}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            closeConnectionModal()
+            return
+          }
+
+          setShowConnectionModal(true)
+        }}
+      >
+        <Modal.Container>
+          <Modal.Dialog className="w-full max-w-xl">
+            <Modal.Header>
+              <Modal.Heading>Connection Details</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="p-2">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="grid gap-1">
                   <Select
-                    aria-label="Protocol"
+                    aria-label="Service Type"
                     className="w-full"
-                    selectedKey={ftpParts.protocol}
+                    selectedKey={connectionDraft.protocol}
                     onSelectionChange={(value) => {
                       const nextProtocol = parseProtocol(String(value))
-                      updateConfig({
-                        ftpUrl: buildFtpUrl(nextProtocol, ftpParts.hostname, ftpParts.port, ftpParts.path)
-                      })
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        protocol: nextProtocol,
+                        port:
+                          !currentDraft.port ||
+                            currentDraft.port === getDefaultPort(currentDraft.protocol)
+                            ? getDefaultPort(nextProtocol)
+                            : currentDraft.port
+                      }))
                     }}
                   >
-                    <Label>Protocol</Label>
+                    <Label>Service Type</Label>
                     <Select.Trigger>
                       <Select.Value />
                       <Select.Indicator />
@@ -250,22 +549,12 @@ export const SetupScreen = (): React.JSX.Element => {
                   <span className="text-sm text-zinc-300">Hostname</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={ftpParts.hostname}
+                    value={connectionDraft.hostname}
                     onChange={(event) => {
-                      const rawHostname = event.target.value
-                      const withoutProtocol = rawHostname.trim().replace(/^(?:ftp|ftps|sftp):\/\//i, '')
-                      const slashIndex = withoutProtocol.indexOf('/')
-                      const hostPortSegment =
-                        slashIndex >= 0 ? withoutProtocol.slice(0, slashIndex) : withoutProtocol
-                      const pathSegment =
-                        slashIndex >= 0 ? withoutProtocol.slice(slashIndex) : ftpParts.path
-                      const hostPortMatch = hostPortSegment.match(/^(.*?)(?::(\d+))?$/)
-                      const hostname = (hostPortMatch?.[1] || '').trim()
-                      const port = hostPortMatch?.[2] || ftpParts.port
-
-                      updateConfig({
-                        ftpUrl: buildFtpUrl(ftpParts.protocol, hostname, port, pathSegment)
-                      })
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        hostname: event.target.value
+                      }))
                     }}
                     placeholder="example.com"
                   />
@@ -275,120 +564,232 @@ export const SetupScreen = (): React.JSX.Element => {
                   <span className="text-sm text-zinc-300">Port</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={ftpParts.port}
+                    value={connectionDraft.port}
                     onChange={(event) => {
                       const nextPort = event.target.value.replace(/[^\d]/g, '')
-                      updateConfig({
-                        ftpUrl: buildFtpUrl(
-                          ftpParts.protocol,
-                          ftpParts.hostname,
-                          nextPort || getDefaultPort(ftpParts.protocol),
-                          ftpParts.path
-                        )
-                      })
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        port: nextPort || getDefaultPort(currentDraft.protocol)
+                      }))
                     }}
-                    placeholder={getDefaultPort(ftpParts.protocol)}
+                    placeholder={getDefaultPort(connectionDraft.protocol)}
                   />
                 </label>
 
-                <label className="grid gap-1 md:col-span-2">
-                  <span className="text-sm text-zinc-300">Path</span>
+                <label className="grid gap-1">
+                  <span className="text-sm text-zinc-300">Remote Path</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={ftpParts.path}
+                    value={connectionDraft.path}
                     onChange={(event) => {
-                      updateConfig({
-                        ftpUrl: buildFtpUrl(
-                          ftpParts.protocol,
-                          ftpParts.hostname,
-                          ftpParts.port,
-                          event.target.value
-                        )
-                      })
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        path: event.target.value
+                      }))
                     }}
                     placeholder="/"
                   />
                 </label>
 
                 <label className="grid gap-1">
-                  <span className="text-sm text-zinc-300">FTP username</span>
+                  <span className="text-sm text-zinc-300">Username</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={config.ftpUsername}
-                    onChange={(event) => updateConfig({ ftpUsername: event.target.value })}
+                    value={connectionDraft.username}
+                    onChange={(event) => {
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        username: event.target.value
+                      }))
+                    }}
                     placeholder="Username"
                   />
                 </label>
 
                 <label className="grid gap-1">
-                  <span className="text-sm text-zinc-300">FTP password</span>
+                  <span className="text-sm text-zinc-300">Password</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
                     type="password"
-                    value={config.ftpPassword}
-                    onChange={(event) => updateConfig({ ftpPassword: event.target.value })}
+                    value={connectionDraft.password}
+                    onChange={(event) => {
+                      setConnectionDraft((currentDraft) => ({
+                        ...currentDraft,
+                        password: event.target.value
+                      }))
+                    }}
                     placeholder="Password"
                   />
                 </label>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  isDisabled={ftpTesting}
-                  onPress={() => {
-                    void testFtpConnection()
-                  }}
-                  variant="tertiary"
-                >
-                  <FontAwesomeIcon icon={faServer} />
-                  {ftpTesting ? 'Testing...' : 'Test connection'}
-                </Button>
-              </div>
-            </section>
+              {connectionModalError ? (
+                <div className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {connectionModalError}
+                </div>
+              ) : null}
+            </Modal.Body>
+            <Modal.Footer>
+              <Button onPress={closeConnectionModal} variant="tertiary">
+                Cancel
+              </Button>
+              <Button
+                isDisabled={connectionSaving}
+                onPress={() => {
+                  void handleSaveConnection()
+                }}
+                variant="primary"
+              >
+                {connectionSaving ? 'Connecting...' : 'Save & Connect'}
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
 
-            <section className="grid gap-3 rounded-xl bg-white/5 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">
-                Twitch client
-                <br />
-                (optional, needed for fetching metadata)
+      <Modal.Backdrop
+        isOpen={showDeleteConnectionModal}
+        onOpenChange={(isOpen) => {
+          setShowDeleteConnectionModal(isOpen)
+        }}
+      >
+        <Modal.Container>
+          <Modal.Dialog className="w-full max-w-xl">
+            <Modal.Header>
+              <Modal.Heading>Delete Connection</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              <p className="text-sm text-zinc-300">
+                Are you sure you want to delete this connection? This will clear the remote library cache.
               </p>
+            </Modal.Body>
+            <Modal.Footer>
+              <Button
+                onPress={() => {
+                  setShowDeleteConnectionModal(false)
+                }}
+                variant="tertiary"
+              >
+                Cancel
+              </Button>
+              <Button onPress={() => {
+                void handleDeleteConnection()
+              }} variant="danger">
+                <FontAwesomeIcon icon={faTrashCan} />
+                Delete
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+
+      <Modal.Backdrop
+        isOpen={showIgdbModal}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            closeIgdbModal()
+            return
+          }
+
+          setShowIgdbModal(true)
+        }}
+      >
+        <Modal.Container>
+          <Modal.Dialog className="w-full max-w-xl">
+            <Modal.Header>
+              <Modal.Heading>IGDB (Twitch API) Details</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="p-2">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="grid gap-1">
-                  <span className="text-sm text-zinc-300">Twitch Client ID</span>
+                  <span className="text-sm text-zinc-300">Client ID</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                    value={config.twitchClientId}
-                    onChange={(event) => updateConfig({ twitchClientId: event.target.value })}
+                    value={igdbDraft.clientId}
+                    onChange={(event) => {
+                      setIgdbDraft((currentDraft) => ({
+                        ...currentDraft,
+                        clientId: event.target.value
+                      }))
+                    }}
                     placeholder="Twitch Client ID"
                   />
                 </label>
 
                 <label className="grid gap-1">
-                  <span className="text-sm text-zinc-300">Twitch Client Secret</span>
+                  <span className="text-sm text-zinc-300">Client Secret</span>
                   <Input
                     className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
                     type="password"
-                    value={config.twitchClientSecret}
-                    onChange={(event) => updateConfig({ twitchClientSecret: event.target.value })}
+                    value={igdbDraft.clientSecret}
+                    onChange={(event) => {
+                      setIgdbDraft((currentDraft) => ({
+                        ...currentDraft,
+                        clientSecret: event.target.value
+                      }))
+                    }}
                     placeholder="Twitch Client Secret"
                   />
                 </label>
               </div>
-            </section>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Button isDisabled={saving} type="submit" variant="primary">
-                <FontAwesomeIcon icon={faFloppyDisk} />
-                {saving ? 'Saving...' : 'Save setup'}
+              {igdbModalError ? (
+                <div className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {igdbModalError}
+                </div>
+              ) : null}
+            </Modal.Body>
+            <Modal.Footer>
+              <Button onPress={closeIgdbModal} variant="tertiary">
+                Cancel
               </Button>
-              <Chip color={setupReady ? 'success' : 'warning'} size="md" variant="soft">
-                {setupReady
-                  ? 'All required fields are present.'
-                  : 'Fill the ROM and connection fields to continue to the platform grid.'}
-              </Chip>
-            </div>
-          </form>
-        </Card.Content>
-      </Card>
+              <Button
+                isDisabled={igdbSaving || !igdbDraftReady}
+                onPress={() => {
+                  void handleSaveIgdbConnection()
+                }}
+                variant="primary"
+              >
+                {igdbSaving ? 'Connecting...' : 'Save & Connect'}
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+
+      <Modal.Backdrop
+        isOpen={showDeleteIgdbModal}
+        onOpenChange={(isOpen) => {
+          setShowDeleteIgdbModal(isOpen)
+        }}
+      >
+        <Modal.Container>
+          <Modal.Dialog className="w-full max-w-xl">
+            <Modal.Header>
+              <Modal.Heading>Delete Connection</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              <p className="text-sm text-zinc-300">
+                Are you sure you want to delete this connection?
+              </p>
+            </Modal.Body>
+            <Modal.Footer>
+              <Button
+                onPress={() => {
+                  setShowDeleteIgdbModal(false)
+                }}
+                variant="tertiary"
+              >
+                Cancel
+              </Button>
+              <Button onPress={() => {
+                void handleDeleteIgdbConnection()
+              }} variant="danger">
+                <FontAwesomeIcon icon={faTrashCan} />
+                Delete
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
     </section>
   )
 }

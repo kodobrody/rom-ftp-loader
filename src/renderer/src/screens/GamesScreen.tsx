@@ -36,10 +36,8 @@ export const GamesScreen = (): React.JSX.Element => {
     toggleShowDownloadedOnly,
     platformMetadataLoading,
     platformMetadataClearing,
-    globalMetadataLoading,
     refetchPlatformMetadata,
     clearPlatformMetadata,
-    fetchMissingAllPlatforms,
     refreshView,
     selectedGames,
     selectedTotalSize,
@@ -237,17 +235,6 @@ export const GamesScreen = (): React.JSX.Element => {
                   >
                     <FontAwesomeIcon icon={faTrashCan} />
                     {platformMetadataClearing ? 'Deleting...' : 'Delete metadata (platform)'}
-                  </Button>
-                  <Button
-                    fullWidth
-                    isDisabled={globalMetadataLoading}
-                    onPress={() => {
-                      togglePlatformMenu()
-                      void fetchMissingAllPlatforms()
-                    }}
-                    variant="tertiary"
-                  >
-                    {globalMetadataLoading ? 'Fetching...' : 'Fetch missing metadata (all platforms)'}
                   </Button>
                 </Card.Content>
               </Card>

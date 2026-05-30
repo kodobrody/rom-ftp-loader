@@ -17,7 +17,6 @@ interface LibraryStore {
   showDownloadedOnly: boolean
   selectionMode: boolean
   showPlatformMenu: boolean
-  globalMetadataLoading: boolean
   platformMetadataLoading: boolean
   platformMetadataClearing: boolean
   platforms: PlatformSummary[]
@@ -37,7 +36,6 @@ interface LibraryStore {
   togglePlatformMenu: () => void
   refreshPlatforms: (nextConfig?: AppConfig) => Promise<void>
   toggleShowDownloadedOnly: () => void
-  fetchMissingAllPlatforms: () => Promise<void>
   openPlatform: (platform: PlatformSummary) => Promise<void>
   backToPlatforms: () => void
   refreshView: () => Promise<void>
@@ -136,7 +134,6 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   showDownloadedOnly: false,
   selectionMode: false,
   showPlatformMenu: false,
-  globalMetadataLoading: false,
   platformMetadataLoading: false,
   platformMetadataClearing: false,
   platforms: [],
@@ -188,6 +185,7 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   },
   resetLibraryView: () => {
     const nextBase = {
+      platforms: [],
       selectedPlatform: null,
       games: [],
       showDownloadedOnly: false,
@@ -198,13 +196,14 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
 
     const derived = applyDerived({
       games: nextBase.games,
-      platforms: get().platforms,
+      platforms: nextBase.platforms,
       selectedGameIds: nextBase.selectedGameIds,
       selectionMode: nextBase.selectionMode,
       showDownloadedOnly: nextBase.showDownloadedOnly
     })
 
     set({ ...nextBase, ...derived })
+    useGameModalStore.getState().refreshDerivedFromStores()
   },
   togglePlatformMenu: () => {
     set((state) => ({ showPlatformMenu: !state.showPlatformMenu }))
@@ -259,33 +258,6 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       selectedGameIds: [],
       ...derived
     })
-  },
-  fetchMissingAllPlatforms: async () => {
-    set({ globalMetadataLoading: true })
-
-    try {
-      const result = await window.api.fetchMissingMetadataAllPlatforms()
-      useAppStateStore
-        .getState()
-        .setInfoMessage(
-          `Refetched metadata for ${result.romsFetched} ROMs in ${result.platformsProcessed} platforms.`
-        )
-
-      await get().refreshPlatforms()
-
-      const selectedPlatform = get().selectedPlatform
-      if (selectedPlatform) {
-        await get().refreshGames(selectedPlatform.sourceName, { fetchMissingMetadata: false })
-      }
-    } catch (error) {
-      useAppStateStore
-        .getState()
-        .setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to fetch missing metadata.'
-        )
-    } finally {
-      set({ globalMetadataLoading: false })
-    }
   },
   openPlatform: async (platform) => {
     set({

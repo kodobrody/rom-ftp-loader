@@ -1,4 +1,4 @@
-import { faDownload, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
+import { faDownload, faFilter, faMagnifyingGlass, faRotateRight } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Card } from '@heroui/react'
 import { useEffect, useRef } from 'react'
@@ -6,7 +6,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStateStore } from '../store/appStateStore'
 import { useLibraryStore } from '../store/libraryStore'
 import { useSearchStore } from '../store/searchStore'
-import { formatBytes } from '../utils/formatting'
 
 const PLATFORM_MENU_QUERY_KEY = 'menu'
 const PLATFORM_MENU_QUERY_VALUE = 'platforms'
@@ -19,8 +18,6 @@ const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
 
 export const PlatformsScreen = (): React.JSX.Element => {
   const {
-    fetchMissingAllPlatforms,
-    globalMetadataLoading,
     platformMenuRef,
     platformsLoading,
     refreshPlatforms,
@@ -214,6 +211,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
                     }}
                     variant="tertiary"
                   >
+                    <FontAwesomeIcon icon={faRotateRight} />
                     Refresh platforms
                   </Button>
                   <Button
@@ -224,19 +222,8 @@ export const PlatformsScreen = (): React.JSX.Element => {
                     }}
                     variant="tertiary"
                   >
-                    <FontAwesomeIcon icon={faDownload} />
+                    <FontAwesomeIcon icon={faFilter} />
                     {showDownloadedOnly ? 'Show all games' : 'Show downloaded only'}
-                  </Button>
-                  <Button
-                    fullWidth
-                    isDisabled={globalMetadataLoading}
-                    onPress={() => {
-                      closePlatformMenu()
-                      void fetchMissingAllPlatforms()
-                    }}
-                    variant="tertiary"
-                  >
-                    {globalMetadataLoading ? 'Fetching...' : 'Fetch missing metadata (all platforms)'}
                   </Button>
                 </Card.Content>
               </Card>
@@ -277,7 +264,6 @@ export const PlatformsScreen = (): React.JSX.Element => {
                 {platform.name}
               </span>
               <strong className="text-zinc-100">{platform.remoteGameCount} games</strong>
-              <span className="text-sm text-zinc-400">{formatBytes(platform.totalSize)}</span>
             </Button>
           ))}
         </div>

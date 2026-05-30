@@ -37,7 +37,6 @@ export const AppHeader = (): React.JSX.Element => {
     <Card>
       <Card.Content className="grid gap-4 rounded-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">ROM Downloader</p>
           <h1 className="text-2xl font-semibold text-zinc-100">{title}</h1>
           {selectedPlatform ? (
             <div className="mt-3 flex flex-wrap gap-3">

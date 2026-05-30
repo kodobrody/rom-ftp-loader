@@ -4,7 +4,6 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
-  MetadataRefreshResult,
   PlatformSummary
 } from '../shared/types'
 
@@ -19,13 +18,13 @@ declare global {
       pickConfigFile: () => Promise<string | null>
       loadConfigFromFile: (filePath: string) => Promise<AppConfig>
       testFtpConnection: (config: AppConfig) => Promise<boolean>
+      testTwitchConnection: (config: AppConfig) => Promise<boolean>
       listPlatforms: () => Promise<PlatformSummary[]>
       listGames: (
         platformName: string,
         options?: { fetchMissingMetadata?: boolean; forceRefetchMetadata?: boolean }
       ) => Promise<GameEntry[]>
       deleteLocalFile: (localPath: string) => Promise<boolean>
-      fetchMissingMetadataAllPlatforms: () => Promise<MetadataRefreshResult>
       fetchGameMetadata: (
         platformName: string,
         romFileName: string,
