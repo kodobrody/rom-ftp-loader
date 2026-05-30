@@ -1,5 +1,6 @@
 import { Button, Card } from '@heroui/react'
-import { forwardRef } from 'react'
+import { forwardRef, useState } from 'react'
+import { CircleMarker, FaceButtonGlyph } from './GamepadGlyph'
 
 interface OnScreenKeyboardProps {
   rows: string[][]
@@ -15,6 +16,18 @@ interface OnScreenKeyboardProps {
 
 const keyButtonClass = 'min-w-11 px-3'
 const wideKeyButtonClass = 'min-w-24 px-4'
+const controlKeyButtonClass = 'min-w-28 px-4'
+const layoutToggleButtonClass = 'min-w-20 px-3'
+
+const symbolsRows: string[][] = [
+  ['.', '-', '_', '@', ':', '/', '\\', '?', '#', '%'],
+  ['!', '$', '&', '*', '+', '=', '~', '^', '|', ';'],
+  ['(', ')', '[', ']', '{', '}', '"', "'", ',', '`']
+]
+
+const isLetterKey = (value: string): boolean => {
+  return /^[a-z]$/i.test(value)
+}
 
 export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
   (
@@ -32,11 +45,45 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
     ref
   ): React.JSX.Element => {
     void previewVersion
+    const [shiftActive, setShiftActive] = useState(false)
+    const [capsLockActive, setCapsLockActive] = useState(false)
+    const [showSymbolsLayout, setShowSymbolsLayout] = useState(false)
     const target = targetRef.current
     const value = target?.value || ''
     const cursorPos = target?.selectionStart ?? value.length
     const beforeCursor = value.slice(0, cursorPos)
     const afterCursor = value.slice(cursorPos)
+
+    const handleKeyboardKeyPress = (key: string): void => {
+      if (key === '{shift}') {
+        setShiftActive((state) => !state)
+        return
+      }
+
+      if (key === '{caps}') {
+        setCapsLockActive((state) => !state)
+        return
+      }
+
+      if (isLetterKey(key)) {
+        const shouldUppercase = capsLockActive !== shiftActive
+        onKeyPress(shouldUppercase ? key.toUpperCase() : key.toLowerCase())
+
+        if (shiftActive) {
+          setShiftActive(false)
+        }
+
+        return
+      }
+
+      onKeyPress(key)
+
+      if (shiftActive) {
+        setShiftActive(false)
+      }
+    }
+
+    const visibleRows = showSymbolsLayout ? symbolsRows : rows
 
     return (
       <section
@@ -57,25 +104,57 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
               </div>
             ) : null}
             <div className="grid gap-2">
-              {rows.map((row, rowIndex) => (
-                <div className="flex justify-center gap-2" key={`keyboard-row-${rowIndex}`}>
+              {visibleRows.map((row, rowIndex) => (
+                <div
+                  className="on-screen-keyboard__row flex justify-center gap-2"
+                  key={`keyboard-row-${rowIndex}`}
+                >
                   {row.map((key) => (
                     <Button
                       className={keyButtonClass}
                       data-key={key}
                       key={key}
-                      onPress={() => onKeyPress(key)}
+                      onPress={() => handleKeyboardKeyPress(key)}
                       variant="tertiary"
-                      autoFocus={key === 'q'}
+                      autoFocus={showSymbolsLayout ? rowIndex === 0 && key === '.' : key === 'q'}
                     >
-                      {key}
+                      {isLetterKey(key)
+                        ? capsLockActive !== shiftActive
+                          ? key.toUpperCase()
+                          : key.toLowerCase()
+                        : key}
                     </Button>
                   ))}
                 </div>
               ))}
-              <div className="flex justify-center gap-2">
+              <div className="on-screen-keyboard__row flex justify-center gap-2">
+                <Button
+                  className={layoutToggleButtonClass}
+                  data-key="{layout}"
+                  onPress={() => setShowSymbolsLayout((state) => !state)}
+                  variant="tertiary"
+                >
+                  {showSymbolsLayout ? 'ABC' : '123#'}
+                </Button>
                 <Button
                   className={keyButtonClass}
+                  data-key="."
+                  onPress={() => handleKeyboardKeyPress('.')}
+                  variant="tertiary"
+                >
+                  .
+                </Button>
+                <Button
+                  className={keyButtonClass}
+                  data-key="/"
+                  onPress={() => handleKeyboardKeyPress('/')}
+                  variant="tertiary"
+                >
+                  /
+                </Button>
+                <Button
+                  className={keyButtonClass}
+                  data-key="{up}"
                   onPress={() => onKeyPress('{up}')}
                   variant="tertiary"
                 >
@@ -83,22 +162,25 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
                 </Button>
                 <Button
                   className="min-w-28 px-4"
-                  onPress={() => onKeyPress('{space}')}
+                  data-key="{space}"
+                  onPress={() => handleKeyboardKeyPress('{space}')}
                   variant="tertiary"
                 >
-                  Space
+                  <FaceButtonGlyph active="y" /> Space
                 </Button>
                 <Button
                   className="min-w-28 px-4"
-                  onPress={() => onKeyPress('{backspace}')}
+                  data-key="{backspace}"
+                  onPress={() => handleKeyboardKeyPress('{backspace}')}
                   variant="tertiary"
                 >
-                  ← Backspace
+                  <FaceButtonGlyph active="x" /> Backspace
                 </Button>
               </div>
-              <div className="flex justify-center gap-2">
+              <div className="on-screen-keyboard__row flex justify-center gap-2">
                 <Button
                   className={keyButtonClass}
+                  data-key="{left}"
                   onPress={() => onKeyPress('{left}')}
                   variant="tertiary"
                 >
@@ -106,6 +188,7 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
                 </Button>
                 <Button
                   className={keyButtonClass}
+                  data-key="{down}"
                   onPress={() => onKeyPress('{down}')}
                   variant="tertiary"
                 >
@@ -113,10 +196,27 @@ export const OnScreenKeyboard = forwardRef<HTMLElement, OnScreenKeyboardProps>(
                 </Button>
                 <Button
                   className={keyButtonClass}
+                  data-key="{right}"
                   onPress={() => onKeyPress('{right}')}
                   variant="tertiary"
                 >
                   →
+                </Button>
+                <Button
+                  className={controlKeyButtonClass}
+                  data-key="{shift}"
+                  onPress={() => handleKeyboardKeyPress('{shift}')}
+                  variant={shiftActive ? 'primary' : 'tertiary'}
+                >
+                  <CircleMarker label="L2" /> Shift
+                </Button>
+                <Button
+                  className={controlKeyButtonClass}
+                  data-key="{caps}"
+                  onPress={() => handleKeyboardKeyPress('{caps}')}
+                  variant={capsLockActive ? 'primary' : 'tertiary'}
+                >
+                  <CircleMarker label="L" /> Caps lock
                 </Button>
                 <Button
                   className={wideKeyButtonClass}

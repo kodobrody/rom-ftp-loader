@@ -56,6 +56,7 @@ interface LibraryStore {
   downloadSelectedGames: () => Promise<void>
   clearSelection: () => void
   gameTileClick: (game: GameEntry) => void
+  activateSelectionModeForGame: (gameId: string) => void
   closeGameModal: () => void
 }
 
@@ -542,6 +543,36 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
     }
 
     useGameModalStore.getState().openGameModal(game.id)
+  },
+  activateSelectionModeForGame: (gameId) => {
+    const game = get().games.find((entry) => entry.id === gameId)
+
+    if (!game) {
+      return
+    }
+
+    const queueItem = get().downloadSnapshot.items.find((item) => item.gameId === game.id)
+    const isDownloading = Boolean(queueItem && ['queued', 'downloading'].includes(queueItem.status))
+
+    if (isDownloading) {
+      return
+    }
+
+    const selectedGameIds = [gameId]
+    const derived = applyDerived({
+      games: get().games,
+      platforms: get().platforms,
+      selectedGameIds,
+      selectionMode: true,
+      showDownloadedOnly: get().showDownloadedOnly
+    })
+
+    set({
+      selectionMode: true,
+      showPlatformMenu: false,
+      selectedGameIds,
+      ...derived
+    })
   },
   closeGameModal: () => {
     useGameModalStore.getState().closeGameModal()

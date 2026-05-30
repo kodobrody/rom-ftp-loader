@@ -87,22 +87,36 @@ export const SearchScreen = (): React.JSX.Element => {
 
       <Card className={showOnScreenKeyboard ? 'pb-2' : ''}>
         <Card.Content className="grid gap-3 p-4">
-          <Input
-            className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-            onChange={(event) => {
-              setSearchQuery(event.target.value)
-            }}
-            onClick={() => {
-              if (inputKeyboardMode === 'always') {
-                setShowOnScreenKeyboard(true)
-              }
-            }}
-            placeholder="Search games..."
-            ref={(element) => {
-              searchInputRef.current = element
-            }}
-            value={searchQuery}
-          />
+          {!showOnScreenKeyboard ? (
+            <Input
+              className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
+              onChange={(event) => {
+                setSearchQuery(event.target.value)
+              }}
+              onClick={() => {
+                if (inputKeyboardMode === 'always') {
+                  setShowOnScreenKeyboard(true)
+                }
+              }}
+              placeholder="Search games..."
+              ref={(element) => {
+                searchInputRef.current = element
+              }}
+              value={searchQuery}
+              autoFocus
+            />
+          ) : (
+            <OnScreenKeyboard
+              closeLabel="Hide keyboard"
+              docked
+              onHide={hideKeyboard}
+              onKeyPress={(key) => applyKeyboardKey(key, { keepInputFocus: false })}
+              ref={onScreenKeyboardRef}
+              rows={keyboardRows}
+              showPreview={inputKeyboardMode === 'gamepad'}
+              targetRef={searchInputRef}
+            />
+          )}
 
           {searchIndexQuery.isLoading ? (
             <p className="grid min-h-24 place-items-center text-center text-sm text-zinc-400">
@@ -117,7 +131,7 @@ export const SearchScreen = (): React.JSX.Element => {
               No matching games found.
             </p>
           ) : (
-            <div className="grid max-h-[52vh] gap-3 overflow-auto pr-1">
+            <div className="grid max-h-[52vh] gap-3 overflow-auto p-1">
               {searchResults.map((entry) => {
                 const resultKey = makeSearchEntryKey(entry)
 
@@ -156,19 +170,6 @@ export const SearchScreen = (): React.JSX.Element => {
               })}
             </div>
           )}
-
-          {showOnScreenKeyboard ? (
-            <OnScreenKeyboard
-              closeLabel="Hide keyboard"
-              docked
-              onHide={hideKeyboard}
-              onKeyPress={applyKeyboardKey}
-              ref={onScreenKeyboardRef}
-              rows={keyboardRows}
-              showPreview={inputKeyboardMode === 'gamepad'}
-              targetRef={searchInputRef}
-            />
-          ) : null}
         </Card.Content>
       </Card>
     </section>

@@ -39,6 +39,13 @@ const applyKey = (target: HTMLInputElement | HTMLTextAreaElement, key: string): 
   applyInputEvent(target)
 }
 
+const keepInputCaretVisible = (target: HTMLInputElement | HTMLTextAreaElement): void => {
+  target.focus()
+  const caretPosition = target.selectionEnd ?? target.value.length
+  target.selectionStart = caretPosition
+  target.selectionEnd = caretPosition
+}
+
 interface SearchStore {
   searchQuery: string
   showOnScreenKeyboard: boolean
@@ -47,11 +54,13 @@ interface SearchStore {
   keyboardRows: string[][]
   setSearchQuery: (value: string) => void
   setShowOnScreenKeyboard: (value: boolean) => void
-  prepareSearchSession: () => void
+  prepareSearchSession: (openedByGamepad?: boolean) => void
   resetSearchSession: () => void
   openSearchResultInModal: (entry: SearchIndexEntry) => Promise<void>
   hideKeyboard: () => void
-  applyKeyboardKey: (key: string) => void
+  applyKeyboardKey: (key: string, options?: { keepInputFocus?: boolean }) => void
+  setOpenedByGamepad: (value: boolean) => void
+  openedByGamepad: boolean
 }
 
 export const useSearchStore = create<SearchStore>((set, get) => ({
@@ -65,18 +74,32 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
     ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
     ['z', 'x', 'c', 'v', 'b', 'n', 'm']
   ],
+  openedByGamepad: false,
+  setOpenedByGamepad: (value) => set({ openedByGamepad: value }),
   setSearchQuery: (searchQuery) => {
     set({ searchQuery })
   },
   setShowOnScreenKeyboard: (showOnScreenKeyboard) => {
     set({ showOnScreenKeyboard })
   },
-  prepareSearchSession: () => {
+  prepareSearchSession: (openedByGamepad = false) => {
     const inputKeyboardMode = useSetupStore.getState().config.inputKeyboardMode
-    set({ searchQuery: '', showOnScreenKeyboard: inputKeyboardMode === 'always' })
+    let showOnScreenKeyboard = false
+    if (inputKeyboardMode === 'always') {
+      showOnScreenKeyboard = true
+    } else if (inputKeyboardMode === 'gamepad' && openedByGamepad) {
+      showOnScreenKeyboard = true
+    } else {
+      showOnScreenKeyboard = false
+    }
+    set({
+      searchQuery: '',
+      showOnScreenKeyboard,
+      openedByGamepad
+    })
   },
   resetSearchSession: () => {
-    set({ searchQuery: '', showOnScreenKeyboard: false })
+    set({ searchQuery: '', showOnScreenKeyboard: false, openedByGamepad: false })
     useKeyboardModalStore.getState().setShowOnScreenKeyboard(false)
   },
   openSearchResultInModal: async (entry) => {
@@ -87,11 +110,17 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
     set({ showOnScreenKeyboard: false })
     useKeyboardModalStore.getState().setShowOnScreenKeyboard(false)
   },
-  applyKeyboardKey: (key) => {
+  applyKeyboardKey: (key, options) => {
     const target = get().searchInputRef.current
+    const keepInputFocus = options?.keepInputFocus ?? true
 
     if (target && !target.disabled && !target.readOnly) {
       applyKey(target, key)
+
+      if (keepInputFocus) {
+        keepInputCaretVisible(target)
+      }
+
       return
     }
 

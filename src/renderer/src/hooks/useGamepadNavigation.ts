@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
+import { useLibraryStore } from '../store/libraryStore'
 import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
+import { useSearchStore } from '../store/searchStore'
 import { useSetupStore } from '../store/setupStore'
 
 type GamepadDirection = 'up' | 'down' | 'left' | 'right'
-type GamepadControl = GamepadDirection | 'activate' | 'back'
+type GamepadControl = GamepadDirection | 'activate' | 'back' | 'x' | 'y' | 'l2' | 'l3'
 const navigationSectionSelector =
   '.platform-grid, .game-grid, .toolbar-actions, .topbar-actions, .library-toolbar, .setup-actions, .setup-grid, .setup-form, .field-row, .pill-row, .game-modal__actions, .download-list'
 const focusableSelector =
@@ -11,6 +13,7 @@ const focusableSelector =
 const INITIAL_DPAD_REPEAT_INTERVAL_MS = 220
 const ACCELERATED_DPAD_REPEAT_INTERVAL_MS = 80
 const DPAD_ACCELERATION_DELAY_MS = 3000
+const ACTIVATE_LONG_PRESS_MS = 500
 const FOCUS_SCROLL_PADDING_PX = 72
 const focusTrapSelector =
   '[data-gamepad-focus-trap="true"], [role="dialog"], [aria-modal="true"], [role="menu"]'
@@ -520,7 +523,11 @@ export const useGamepadNavigation = () => {
       left: false,
       right: false,
       activate: false,
-      back: false
+      back: false,
+      x: false,
+      y: false,
+      l2: false,
+      l3: false
     }
 
     const pressedSince: Record<GamepadControl, number> = {
@@ -529,7 +536,11 @@ export const useGamepadNavigation = () => {
       left: 0,
       right: 0,
       activate: 0,
-      back: 0
+      back: 0,
+      x: 0,
+      y: 0,
+      l2: 0,
+      l3: 0
     }
 
     const lastTriggeredAt: Record<GamepadControl, number> = {
@@ -538,8 +549,16 @@ export const useGamepadNavigation = () => {
       left: 0,
       right: 0,
       activate: 0,
-      back: 0
+      back: 0,
+      x: 0,
+      y: 0,
+      l2: 0,
+      l3: 0
     }
+
+    let activateStartedOnGameTile = false
+    let activateLongPressHandled = false
+    let activateTargetGameId: string | null = null
 
     const handleBackAction = (): void => {
       if (hasRouteLevelOverlayInLocation() && window.history.length > 1) {
@@ -577,6 +596,10 @@ export const useGamepadNavigation = () => {
         const activatePressed = Boolean(gamepad.buttons[0]?.pressed)
         const backPressed =
           Boolean(gamepad.buttons[1]?.pressed) || Boolean(gamepad.buttons[8]?.pressed)
+        const xPressed = Boolean(gamepad.buttons[2]?.pressed)
+        const yPressed = Boolean(gamepad.buttons[3]?.pressed)
+        const l2Pressed = Boolean(gamepad.buttons[6]?.pressed)
+        const l3Pressed = Boolean(gamepad.buttons[10]?.pressed)
 
         if (
           (direction === 'up' && upPressed) ||
@@ -584,7 +607,11 @@ export const useGamepadNavigation = () => {
           (direction === 'left' && leftPressed) ||
           (direction === 'right' && rightPressed) ||
           (direction === 'activate' && activatePressed) ||
-          (direction === 'back' && backPressed)
+          (direction === 'back' && backPressed) ||
+          (direction === 'x' && xPressed) ||
+          (direction === 'y' && yPressed) ||
+          (direction === 'l2' && l2Pressed) ||
+          (direction === 'l3' && l3Pressed)
         ) {
           return true
         }
@@ -776,6 +803,13 @@ export const useGamepadNavigation = () => {
         if (!activeElement.disabled && !activeElement.readOnly) {
           setKeyboardTarget(activeElement)
           setShowOnScreenKeyboard(true)
+          // If this is the search input, mark search as opened by gamepad
+          if (
+            activeElement.getAttribute('placeholder') === 'Search games...' &&
+            window.location.pathname === '/search'
+          ) {
+            useSearchStore.getState().setOpenedByGamepad(true)
+          }
         }
         return
       }
@@ -787,10 +821,98 @@ export const useGamepadNavigation = () => {
       }
     }
 
+    const getVisibleKeyboardRoot = (): HTMLElement | null => {
+      const keyboards = Array.from(
+        document.querySelectorAll<HTMLElement>('section[aria-label="On-screen keyboard"]')
+      )
+
+      return keyboards.find((keyboard) => isElementVisible(keyboard)) ?? null
+    }
+
+    const pressKeyboardButton = (key: string): boolean => {
+      const keyboardRoot = getVisibleKeyboardRoot()
+
+      if (!keyboardRoot) {
+        return false
+      }
+
+      const button = keyboardRoot.querySelector<HTMLElement>(`button[data-key="${key}"]`)
+
+      if (!button || !isElementVisible(button) || button.hasAttribute('disabled')) {
+        return false
+      }
+
+      button.click()
+      return true
+    }
+
+    const focusPlatformSearchButton = (): void => {
+      const searchButton = document.querySelector<HTMLElement>(
+        'button[data-gamepad-search-trigger="true"]'
+      )
+
+      if (
+        !searchButton ||
+        !isElementVisible(searchButton) ||
+        searchButton.hasAttribute('disabled')
+      ) {
+        return
+      }
+
+      searchButton.focus()
+    }
+
+    const handleKeyboardShortcutControl = (control: 'x' | 'y' | 'l2' | 'l3'): void => {
+      const keyboardRoot = getVisibleKeyboardRoot()
+      if (!keyboardRoot) {
+        if (control === 'y') {
+          focusPlatformSearchButton()
+        }
+        return
+      }
+
+      if (control === 'x') {
+        pressKeyboardButton('{backspace}')
+        return
+      }
+
+      if (control === 'y') {
+        // Find the Space button and click it directly, but do not move focus
+        const btn = keyboardRoot.querySelector('button[data-key="{space}"]')
+        if (
+          btn instanceof HTMLElement &&
+          typeof btn.click === 'function' &&
+          !btn.hasAttribute('disabled') &&
+          isElementVisible(btn)
+        ) {
+          btn.click()
+        }
+        return
+      }
+
+      if (control === 'l2') {
+        pressKeyboardButton('{shift}')
+        return
+      }
+
+      pressKeyboardButton('{caps}')
+    }
+
     let frameId = 0
 
     const tick = (): void => {
-      const controls: GamepadControl[] = ['up', 'down', 'left', 'right', 'activate', 'back']
+      const controls: GamepadControl[] = [
+        'up',
+        'down',
+        'left',
+        'right',
+        'activate',
+        'back',
+        'x',
+        'y',
+        'l2',
+        'l3'
+      ]
 
       const now = performance.now()
 
@@ -811,11 +933,33 @@ export const useGamepadNavigation = () => {
               lastTriggeredAt[control] = now
               moveFocus(control)
             } else if (control === 'activate') {
-              activateFocusedElement()
+              const activeElement = document.activeElement as HTMLElement | null
+              const gameEntryId = activeElement?.getAttribute('data-game-entry-id')
+
+              if (gameEntryId && !useLibraryStore.getState().selectionMode) {
+                activateStartedOnGameTile = true
+                activateTargetGameId = gameEntryId
+                activateLongPressHandled = false
+              } else {
+                activateFocusedElement()
+              }
+
               lastTriggeredAt[control] = now
             } else if (control === 'back') {
               handleBackAction()
               lastTriggeredAt[control] = now
+            } else if (control === 'x' || control === 'y' || control === 'l2' || control === 'l3') {
+              handleKeyboardShortcutControl(control)
+              lastTriggeredAt[control] = now
+            }
+          } else if (
+            control === 'activate' &&
+            activateStartedOnGameTile &&
+            !activateLongPressHandled
+          ) {
+            if (now - pressedSince.activate >= ACTIVATE_LONG_PRESS_MS && activateTargetGameId) {
+              useLibraryStore.getState().activateSelectionModeForGame(activateTargetGameId)
+              activateLongPressHandled = true
             }
           } else if (
             control === 'up' ||
@@ -833,8 +977,23 @@ export const useGamepadNavigation = () => {
               moveFocus(control)
               lastTriggeredAt[control] = now
             }
+          } else if (control === 'x' || control === 'y') {
+            if (now - lastTriggeredAt[control] >= INITIAL_DPAD_REPEAT_INTERVAL_MS) {
+              handleKeyboardShortcutControl(control)
+              lastTriggeredAt[control] = now
+            }
           }
         } else {
+          if (control === 'activate' && previousPressed.activate && activateStartedOnGameTile) {
+            if (!activateLongPressHandled) {
+              activateFocusedElement()
+            }
+
+            activateStartedOnGameTile = false
+            activateLongPressHandled = false
+            activateTargetGameId = null
+          }
+
           pressedSince[control] = 0
 
           if (control === 'up' || control === 'down' || control === 'left' || control === 'right') {

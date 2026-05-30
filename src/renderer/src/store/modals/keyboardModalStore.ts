@@ -18,6 +18,13 @@ const applyInputEvent = (target: HTMLInputElement | HTMLTextAreaElement): void =
   target.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+const keepInputCaretVisible = (target: HTMLInputElement | HTMLTextAreaElement): void => {
+  target.focus()
+  const caretPosition = target.selectionEnd ?? target.value.length
+  target.selectionStart = caretPosition
+  target.selectionEnd = caretPosition
+}
+
 export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
   showOnScreenKeyboard: false,
   isSearchScreen: false,
@@ -61,8 +68,8 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
       } else if (start > 0) {
         target.setRangeText('', start - 1, start, 'end')
       }
-
       applyInputEvent(target)
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -70,6 +77,7 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{clear}') {
       target.setRangeText('', 0, target.value.length, 'end')
       applyInputEvent(target)
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -77,6 +85,7 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{space}') {
       target.setRangeText(' ', start, end, 'end')
       applyInputEvent(target)
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -84,6 +93,7 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{left}') {
       target.selectionStart = Math.max(0, start - 1)
       target.selectionEnd = target.selectionStart
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -91,6 +101,7 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{right}') {
       target.selectionStart = Math.min(target.value.length, start + 1)
       target.selectionEnd = target.selectionStart
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -98,6 +109,7 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{up}') {
       target.selectionStart = 0
       target.selectionEnd = 0
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
@@ -105,12 +117,14 @@ export const useKeyboardModalStore = create<KeyboardModalStore>((set, get) => ({
     if (key === '{down}') {
       target.selectionStart = target.value.length
       target.selectionEnd = target.value.length
+      keepInputCaretVisible(target)
       bumpPreview()
       return
     }
 
     target.setRangeText(key, start, end, 'end')
     applyInputEvent(target)
+    keepInputCaretVisible(target)
     bumpPreview()
   }
 }))

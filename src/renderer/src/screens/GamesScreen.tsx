@@ -309,6 +309,7 @@ export const GamesScreen = (): React.JSX.Element => {
                           : 'border-white/10 bg-white/5 hover:bg-white/10'
                     } ${isDownloading ? 'ring-1 ring-sky-300/40' : ''}`}
                     disabled={isSelectionDisabled}
+                    data-game-entry-id={game.id}
                     key={game.id}
                     onClick={() => gameTileClick(game)}
                     type="button"

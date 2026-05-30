@@ -39,6 +39,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
   const navigate = useNavigate()
   const { setErrorMessage, setInfoMessage } = useAppStateStore()
   const { prepareSearchSession } = useSearchStore()
+  const searchButtonRef = useRef<HTMLButtonElement | null>(null)
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null)
   const platformsGridRef = useRef<HTMLDivElement | null>(null)
   const hasAutoFocusedPlatformsRef = useRef(false)
@@ -179,15 +180,19 @@ export const PlatformsScreen = (): React.JSX.Element => {
         <Card.Content className="flex flex-row items-start justify-between gap-3 overflow-visible">
           <div className="flex gap-3">
             <Button
-              onPress={() => {
+              data-gamepad-search-trigger="true"
+              ref={searchButtonRef}
+              onPress={(e) => {
                 if (visiblePlatforms.length === 0) {
                   setInfoMessage('No platforms available to search yet.')
                   return
                 }
-
                 setInfoMessage(null)
                 setErrorMessage(null)
-                prepareSearchSession()
+                // Use pointerType from event: 'virtual' means gamepad/keyboard, else mouse/touch
+                const pointerType = e?.pointerType || ''
+                const openedByGamepad = pointerType === 'virtual'
+                prepareSearchSession(openedByGamepad)
                 navigate('/search')
               }}
               variant="tertiary"
