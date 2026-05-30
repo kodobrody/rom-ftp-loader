@@ -118,21 +118,6 @@ const buildFtpUrl = (
   return `${protocol}://${hostname}${portSegment}${path}`
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
-export const createConnectionDraft = (config: {
-  ftpUrl: string
-  ftpUsername: string
-  ftpPassword: string
-}): ConnectionDraft => {
-  const ftpParts = parseFtpParts(config.ftpUrl)
-
-  return {
-    ...ftpParts,
-    username: config.ftpUsername,
-    password: config.ftpPassword
-  }
-}
-
 const connectionSchema = z.object({
   protocol: z.enum(['ftp', 'ftps', 'sftp']),
   hostname: z.string().trim().min(1, 'Hostname is required.'),
