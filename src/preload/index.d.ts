@@ -32,7 +32,6 @@ declare global {
         romFileName: string,
         forceRefetch?: boolean
       ) => Promise<GameMetadataUpdate>
-      clearPlatformMetadata: (platformName: string) => Promise<number>
       downloadGames: (platformName: string, games: GameEntry[]) => Promise<DownloadSnapshot>
       cancelDownload: (gameId: string) => Promise<DownloadSnapshot>
       clearDownloadQueueHistory: () => Promise<DownloadSnapshot>

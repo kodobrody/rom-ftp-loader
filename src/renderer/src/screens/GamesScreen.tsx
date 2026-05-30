@@ -1,10 +1,10 @@
 import { faSquare } from '@fortawesome/free-regular-svg-icons'
 import {
   faArrowLeft,
-  faArrowsRotate,
   faDownload,
+  faFilter,
+  faListCheck,
   faSquareCheck,
-  faTrashCan,
   faXmark
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -37,11 +37,6 @@ export const GamesScreen = (): React.JSX.Element => {
     selectionMode,
     togglePlatformMenu,
     toggleShowDownloadedOnly,
-    platformMetadataLoading,
-    platformMetadataClearing,
-    refetchPlatformMetadata,
-    clearPlatformMetadata,
-    refreshView,
     selectedGames,
     selectedTotalSize,
     selectionKind,
@@ -81,7 +76,7 @@ export const GamesScreen = (): React.JSX.Element => {
   useEffect(() => {
     const menuElement = platformMenuRef.current
 
-    if (showPlatformMenu && !selectionMode && menuElement) {
+    if (showPlatformMenu && menuElement) {
       const focusableElements = getFocusableElements(menuElement)
       ;(focusableElements[0] ?? menuElement).focus()
       return
@@ -188,27 +183,15 @@ export const GamesScreen = (): React.JSX.Element => {
             <Button
               aria-expanded={showPlatformMenu}
               aria-haspopup="menu"
-              isDisabled={selectionMode}
               onPress={togglePlatformMenu}
               ref={menuTriggerRef}
               variant="tertiary"
             >
               ...
             </Button>
-            {showPlatformMenu && !selectionMode ? (
+            {showPlatformMenu ? (
               <Card className={menuPanelClass} onKeyDown={handleMenuKeyDown}>
                 <Card.Content ref={platformMenuRef} role="menu" tabIndex={-1} className="gap-3">
-                  <Button
-                    fullWidth
-                    onPress={() => {
-                      togglePlatformMenu()
-                      void refreshView()
-                    }}
-                    variant="tertiary"
-                  >
-                    <FontAwesomeIcon icon={faArrowsRotate} />
-                    Refresh view
-                  </Button>
                   <Button
                     fullWidth
                     onPress={() => {
@@ -217,31 +200,19 @@ export const GamesScreen = (): React.JSX.Element => {
                     }}
                     variant="tertiary"
                   >
-                    <FontAwesomeIcon icon={faDownload} />
+                    <FontAwesomeIcon icon={faFilter} />
                     {showDownloadedOnly ? 'Show all games' : 'Show downloaded only'}
                   </Button>
                   <Button
                     fullWidth
-                    isDisabled={platformMetadataLoading || gamesLoading}
                     onPress={() => {
                       togglePlatformMenu()
-                      void refetchPlatformMetadata()
+                      toggleSelectionMode()
                     }}
                     variant="tertiary"
                   >
-                    {platformMetadataLoading ? 'Refetching...' : 'Refetch all metadata (platform)'}
-                  </Button>
-                  <Button
-                    fullWidth
-                    isDisabled={platformMetadataClearing || gamesLoading}
-                    onPress={() => {
-                      togglePlatformMenu()
-                      void clearPlatformMetadata()
-                    }}
-                    variant="tertiary"
-                  >
-                    <FontAwesomeIcon icon={faTrashCan} />
-                    {platformMetadataClearing ? 'Deleting...' : 'Delete metadata (platform)'}
+                    <FontAwesomeIcon icon={selectionMode ? faXmark : faListCheck} />
+                    {selectionMode ? 'Exit selection mode' : 'Select games'}
                   </Button>
                 </Card.Content>
               </Card>
@@ -253,10 +224,6 @@ export const GamesScreen = (): React.JSX.Element => {
       <Card>
         <Card.Content className="grid gap-4">
           <div className="flex flex-wrap items-center gap-3">
-            <Button onPress={toggleSelectionMode} variant="tertiary">
-              <FontAwesomeIcon icon={selectionMode ? faXmark : faSquare} />
-              {selectionMode ? 'Exit selection mode' : 'Select games'}
-            </Button>
             {selectionMode ? (
               <Chip className="h-9 rounded-full px-4 text-base" variant="soft">
                 <FontAwesomeIcon icon={selectedGames.length ? faSquareCheck : faSquare} />
@@ -291,6 +258,11 @@ export const GamesScreen = (): React.JSX.Element => {
                 Clear selection
               </Button>
             ) : null}
+            {selectionMode ? (
+              <Button onPress={toggleSelectionMode} variant="tertiary">
+                Cancel
+              </Button>
+            ) : null}
           </div>
 
           {gamesLoading ? (
@@ -309,34 +281,49 @@ export const GamesScreen = (): React.JSX.Element => {
               {visibleGames.map((game, index) => {
                 const queueItem = downloadSnapshot.items.find((item) => item.gameId === game.id)
                 const checked = selectedGames.some((selectedGame) => selectedGame.id === game.id)
-                const isDownloading =
+                const isDownloading = Boolean(
                   queueItem && ['queued', 'downloading'].includes(queueItem.status)
+                )
+                const isDisabledBySelectionKind =
+                  selectionMode &&
+                  selectionKind !== null &&
+                  (selectionKind === 'downloaded' ? !game.downloaded : game.downloaded)
+                const isSelectionDisabled =
+                  selectionMode && (isDownloading || isDisabledBySelectionKind)
+                const isDownloaded = game.downloaded || queueItem?.status === 'completed'
+                const bottomStatusLabel =
+                  queueItem && queueItem.status !== 'completed'
+                    ? `${queueItem.status} ${queueItem.progress}%`
+                    : isDownloaded
+                      ? 'Downloaded'
+                      : null
 
                 return (
                   <button
                     autoFocus={index === 0 && !showPlatformMenu}
-                    className={`group relative grid gap-3 overflow-hidden rounded-2xl border p-2 text-left transition ${
+                    className={`group relative flex h-full flex-col gap-2 overflow-hidden rounded-2xl border p-2 text-left transition ${
                       checked
-                        ? 'border-blue-400 border-4'
-                        : game.downloaded
-                          ? 'border-green-400/40 bg-green-950/25'
+                        ? 'border-white/35 bg-white/15 ring-2 ring-white/35'
+                        : isSelectionDisabled
+                          ? 'border-white/10 bg-white/5 opacity-45'
                           : 'border-white/10 bg-white/5 hover:bg-white/10'
                     } ${isDownloading ? 'ring-1 ring-sky-300/40' : ''}`}
+                    disabled={isSelectionDisabled}
                     key={game.id}
                     onClick={() => gameTileClick(game)}
                     type="button"
                   >
-                    {selectionMode && !isDownloading ? (
-                      <span
-                        className={`absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-xs font-medium ${
-                          checked ? 'bg-blue-500/80 text-black' : 'bg-black/55 text-zinc-100'
-                        }`}
-                      >
-                        {checked ? 'Selected' : 'Select'}
+                    {selectionMode ? (
+                      <span className="absolute left-2 top-2 z-10 text-zinc-100">
+                        <FontAwesomeIcon icon={checked ? faSquareCheck : faSquare} />
                       </span>
                     ) : null}
 
-                    <div className="grid aspect-3/4 place-items-center overflow-hidden rounded-xl  bg-black/25">
+                    <span className="absolute right-2 top-2 z-10 rounded-full bg-black/65 px-2 py-0.5 text-xs font-semibold text-zinc-100">
+                      {formatBytes(game.size)}
+                    </span>
+
+                    <div className="-mx-2 -mt-2 grid aspect-3/4 place-items-center overflow-hidden bg-black/25">
                       {game.coverUrl ? (
                         <img
                           alt={game.displayName}
@@ -349,34 +336,28 @@ export const GamesScreen = (): React.JSX.Element => {
                       )}
                     </div>
 
-                    <strong className="line-clamp-2 text-sm text-zinc-100">
-                      {game.displayName}
-                    </strong>
-                    {game.discLabel ? (
-                      <Chip color="warning" size="md" variant="soft">
-                        {game.discLabel}
-                      </Chip>
-                    ) : null}
-                    {queueItem && queueItem.status !== 'completed' ? (
-                      <Chip
-                        color={
-                          queueItem.status === 'error'
-                            ? 'danger'
-                            : queueItem.status === 'queued'
-                              ? 'warning'
-                              : 'accent'
-                        }
-                        size="md"
-                        variant="soft"
-                      >
-                        {queueItem.status} {queueItem.progress}%
-                      </Chip>
-                    ) : null}
-                    {game.downloaded ? (
-                      <Chip color="success" size="lg" variant="soft">
-                        Downloaded
-                      </Chip>
-                    ) : null}
+                    <div className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1">
+                      <strong className="line-clamp-2 block max-h-8 text-center text-sm leading-4 text-zinc-100">
+                        {game.displayName}
+                      </strong>
+                      {game.discLabel ? (
+                        <Chip color="warning" size="md" variant="soft">
+                          {game.discLabel}
+                        </Chip>
+                      ) : null}
+                    </div>
+
+                    <div
+                      className={`-mx-2 -mb-2 mt-auto flex h-8 items-center justify-center px-3 text-center text-xs font-semibold uppercase tracking-[0.08em] ${bottomStatusLabel ? 'text-white' : 'text-transparent'} ${
+                        bottomStatusLabel
+                          ? queueItem && queueItem.status !== 'completed'
+                            ? 'bg-sky-600'
+                            : 'bg-emerald-600'
+                          : 'bg-transparent'
+                      }`}
+                    >
+                      {bottomStatusLabel ?? ''}
+                    </div>
                   </button>
                 )
               })}

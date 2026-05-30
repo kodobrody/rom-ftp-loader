@@ -39,8 +39,6 @@ const api = {
       romFileName,
       forceRefetch
     ) as Promise<GameMetadataUpdate>,
-  clearPlatformMetadata: (platformName: string) =>
-    ipcRenderer.invoke('metadata:clear-platform', platformName) as Promise<number>,
   downloadGames: (platformName: string, games: GameEntry[]) =>
     ipcRenderer.invoke('downloads:start', platformName, games) as Promise<DownloadSnapshot>,
   cancelDownload: (gameId: string) =>

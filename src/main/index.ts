@@ -961,25 +961,6 @@ const fetchMetadataForSingleGame = async (
   }
 }
 
-const clearMetadataForPlatform = async (platformName: string): Promise<number> => {
-  const metadataCache = await readMetadataCache()
-  const platformKeyPrefix = `${normalizePlatformKey(platformName)}::`
-  let deletedCount = 0
-
-  for (const cacheKey of Object.keys(metadataCache.entries)) {
-    if (cacheKey.startsWith(platformKeyPrefix)) {
-      delete metadataCache.entries[cacheKey]
-      deletedCount += 1
-    }
-  }
-
-  if (deletedCount > 0) {
-    await saveMetadataCache(metadataCache)
-  }
-
-  return deletedCount
-}
-
 const calculateOverallProgress = (items: DownloadQueueItem[]): number => {
   if (items.length === 0) {
     return 0
@@ -1613,12 +1594,6 @@ ipcMain.handle(
     return fetchMetadataForSingleGame(config, platformName, romFileName, Boolean(forceRefetch))
   }
 )
-
-ipcMain.handle('metadata:clear-platform', async (_event, platformName: string) => {
-  const config = await readConfigFromDisk()
-  assertConfigured(config)
-  return clearMetadataForPlatform(platformName)
-})
 
 ipcMain.handle('downloads:start', async (_event, platformName: string, games: GameEntry[]) => {
   const config = await readConfigFromDisk()

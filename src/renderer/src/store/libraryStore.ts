@@ -23,8 +23,6 @@ interface LibraryStore {
   showDownloadedOnly: boolean
   selectionMode: boolean
   showPlatformMenu: boolean
-  platformMetadataLoading: boolean
-  platformMetadataClearing: boolean
   platforms: PlatformSummary[]
   visiblePlatforms: PlatformSummary[]
   cachedPlatforms: PlatformSummary[]
@@ -47,13 +45,10 @@ interface LibraryStore {
   toggleShowDownloadedOnly: () => void
   openPlatform: (platform: PlatformSummary) => Promise<void>
   backToPlatforms: () => void
-  refreshView: () => Promise<void>
   refreshGames: (
     platformName: string,
     options?: { fetchMissingMetadata?: boolean; forceRefetchMetadata?: boolean }
   ) => Promise<GameEntry[]>
-  refetchPlatformMetadata: () => Promise<void>
-  clearPlatformMetadata: () => Promise<void>
   toggleSelectionMode: () => void
   openBulkDeleteConfirmModal: () => void
   downloadSelectedGames: () => Promise<void>
@@ -75,12 +70,6 @@ const applyDerived = (
   let visibleGames = state.showDownloadedOnly
     ? state.games.filter((game) => game.downloaded)
     : state.games
-
-  if (state.selectionMode && selectionKind !== null) {
-    visibleGames = visibleGames.filter((game) =>
-      selectionKind === 'downloaded' ? game.downloaded : !game.downloaded
-    )
-  }
 
   visibleGames = [...visibleGames].sort((left, right) => {
     if (left.downloaded !== right.downloaded) {
@@ -143,8 +132,6 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   showDownloadedOnly: false,
   selectionMode: false,
   showPlatformMenu: false,
-  platformMetadataLoading: false,
-  platformMetadataClearing: false,
   platforms: [],
   visiblePlatforms: [],
   cachedPlatforms: [],
@@ -364,17 +351,6 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
     })
     useGameModalStore.getState().closeGameModal()
   },
-  refreshView: async () => {
-    const selectedPlatform = get().selectedPlatform
-    if (!selectedPlatform) {
-      return
-    }
-
-    await get().refreshGames(selectedPlatform.sourceName, {
-      fetchMissingMetadata: true,
-      forceRefetchMetadata: true
-    })
-  },
   refreshGames: async (platformName, options) => {
     const cachedGames = get().cachedGamesByPlatform[platformName]
     const hasCachedGames = Object.prototype.hasOwnProperty.call(
@@ -428,86 +404,6 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       return []
     } finally {
       set({ gamesLoading: false })
-    }
-  },
-  refetchPlatformMetadata: async () => {
-    const selectedPlatform = get().selectedPlatform
-    if (!selectedPlatform) {
-      return
-    }
-
-    set({ platformMetadataLoading: true })
-    useAppStateStore.getState().setErrorMessage(null)
-    useAppStateStore.getState().setInfoMessage(null)
-
-    try {
-      const games = await window.api.listGames(selectedPlatform.sourceName, {
-        fetchMissingMetadata: false
-      })
-      get().setGames(games)
-
-      let processedCount = 0
-      const prioritizedGames = [...games].sort((left, right) => {
-        if (left.downloaded !== right.downloaded) {
-          return left.downloaded ? -1 : 1
-        }
-
-        const leftName = left.displayName || left.name
-        const rightName = right.displayName || right.name
-        return leftName.localeCompare(rightName)
-      })
-
-      for (const game of prioritizedGames) {
-        const metadata = await window.api.fetchGameMetadata(
-          selectedPlatform.sourceName,
-          game.name,
-          true
-        )
-        const nextGames = applyMetadataUpdateToGames(
-          get().games,
-          selectedPlatform.sourceName,
-          metadata.romFileName,
-          metadata
-        )
-        get().setGames(nextGames)
-        processedCount += 1
-      }
-
-      useAppStateStore
-        .getState()
-        .setInfoMessage(
-          `Metadata refreshed for ${processedCount} games on ${selectedPlatform.name}.`
-        )
-    } catch (error) {
-      useAppStateStore
-        .getState()
-        .setErrorMessage(error instanceof Error ? error.message : 'Failed to refetch metadata.')
-    } finally {
-      set({ platformMetadataLoading: false })
-    }
-  },
-  clearPlatformMetadata: async () => {
-    const selectedPlatform = get().selectedPlatform
-    if (!selectedPlatform) {
-      return
-    }
-
-    set({ platformMetadataClearing: true })
-    useAppStateStore.getState().setErrorMessage(null)
-    useAppStateStore.getState().setInfoMessage(null)
-
-    try {
-      const deletedCount = await window.api.clearPlatformMetadata(selectedPlatform.sourceName)
-      useAppStateStore
-        .getState()
-        .setInfoMessage(`Deleted metadata for ${deletedCount} entries on ${selectedPlatform.name}.`)
-      await get().refreshGames(selectedPlatform.sourceName, { fetchMissingMetadata: false })
-    } catch (error) {
-      useAppStateStore
-        .getState()
-        .setErrorMessage(error instanceof Error ? error.message : 'Failed to clear metadata.')
-    } finally {
-      set({ platformMetadataClearing: false })
     }
   },
   toggleSelectionMode: () => {
@@ -584,8 +480,18 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
     const queueItem = get().downloadSnapshot.items.find((item) => item.gameId === game.id)
     const isDownloading = Boolean(queueItem && ['queued', 'downloading'].includes(queueItem.status))
 
-    if (get().selectionMode && !isDownloading) {
+    if (get().selectionMode) {
+      if (isDownloading) {
+        return
+      }
+
       const selected = new Set(get().selectedGameIds)
+      const selectionKind = get().selectionKind
+      const gameSelectionKind: SelectionKind = game.downloaded ? 'downloaded' : 'available'
+
+      if (!selected.has(game.id) && selectionKind !== null && gameSelectionKind !== selectionKind) {
+        return
+      }
 
       if (selected.has(game.id)) {
         selected.delete(game.id)
