@@ -5,6 +5,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
 
@@ -23,6 +24,7 @@ const api = {
     ipcRenderer.invoke('app:test-ftp-connection', config) as Promise<boolean>,
   testTwitchConnection: (config: AppConfig) =>
     ipcRenderer.invoke('app:test-twitch-connection', config) as Promise<boolean>,
+  getLibraryCache: () => ipcRenderer.invoke('library:get-cache') as Promise<LibraryCacheSnapshot>,
   listPlatforms: () => ipcRenderer.invoke('library:list-platforms') as Promise<PlatformSummary[]>,
   listGames: (
     platformName: string,

@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import type { AppConfig, DownloadSnapshot, GameEntry, PlatformSummary } from '../../../shared/types'
+import type {
+  AppConfig,
+  DownloadSnapshot,
+  GameEntry,
+  LibraryCacheSnapshot,
+  PlatformSummary
+} from '../../../shared/types'
 import { emptySnapshot, hasRequiredSetup } from '../utils/formatting'
 import { useAppStateStore } from './appStateStore'
 import { useBulkDeleteConfirmModalStore } from './modals/bulkDeleteConfirmModalStore'
@@ -21,6 +27,8 @@ interface LibraryStore {
   platformMetadataClearing: boolean
   platforms: PlatformSummary[]
   visiblePlatforms: PlatformSummary[]
+  cachedPlatforms: PlatformSummary[]
+  cachedGamesByPlatform: Record<string, GameEntry[]>
   games: GameEntry[]
   visibleGames: GameEntry[]
   selectedGameIds: string[]
@@ -30,6 +38,7 @@ interface LibraryStore {
   downloadSnapshot: DownloadSnapshot
   platformMenuRef: PlatformMenuRef
   setDownloadSnapshot: (downloadSnapshot: DownloadSnapshot) => void
+  setLibraryCache: (cache: LibraryCacheSnapshot) => void
   setGames: (games: GameEntry[]) => void
   updateDownloadedFlags: (snapshot: DownloadSnapshot) => void
   resetLibraryView: () => void
@@ -138,6 +147,8 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   platformMetadataClearing: false,
   platforms: [],
   visiblePlatforms: [],
+  cachedPlatforms: [],
+  cachedGamesByPlatform: {},
   games: [],
   visibleGames: [],
   selectedGameIds: [],
@@ -149,6 +160,12 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   setDownloadSnapshot: (downloadSnapshot) => {
     set({ downloadSnapshot })
     useGameModalStore.getState().refreshDerivedFromStores()
+  },
+  setLibraryCache: (cache) => {
+    set({
+      cachedPlatforms: cache.platforms,
+      cachedGamesByPlatform: cache.gamesByPlatform
+    })
   },
   setGames: (games) => {
     const selectedGameIds = get().selectedGameIds.filter((id) =>
@@ -186,6 +203,8 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   resetLibraryView: () => {
     const nextBase = {
       platforms: [],
+      cachedPlatforms: [],
+      cachedGamesByPlatform: {},
       selectedPlatform: null,
       games: [],
       showDownloadedOnly: false,
@@ -216,10 +235,7 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       return
     }
 
-    set({ platformsLoading: true })
-
-    try {
-      const platforms = await window.api.listPlatforms()
+    const applyPlatforms = (platforms: PlatformSummary[]): void => {
       const selectedPlatform = get().selectedPlatform
       const nextSelectedPlatform = selectedPlatform
         ? (platforms.find((platform) => platform.sourceName === selectedPlatform.sourceName) ??
@@ -233,7 +249,38 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
         showDownloadedOnly: get().showDownloadedOnly
       })
 
-      set({ platforms, selectedPlatform: nextSelectedPlatform, ...derived })
+      set({
+        platforms,
+        cachedPlatforms: platforms,
+        selectedPlatform: nextSelectedPlatform,
+        ...derived
+      })
+    }
+
+    const cachedPlatforms = get().cachedPlatforms
+
+    if (cachedPlatforms.length > 0) {
+      applyPlatforms(cachedPlatforms)
+
+      void window.api
+        .listPlatforms()
+        .then((platforms) => {
+          applyPlatforms(platforms)
+        })
+        .catch((error) => {
+          useAppStateStore
+            .getState()
+            .setErrorMessage(error instanceof Error ? error.message : 'Failed to load platforms.')
+        })
+
+      return
+    }
+
+    set({ platformsLoading: true })
+
+    try {
+      const platforms = await window.api.listPlatforms()
+      applyPlatforms(platforms)
     } catch (error) {
       useAppStateStore
         .getState()
@@ -323,15 +370,57 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
       return
     }
 
-    await get().refreshGames(selectedPlatform.sourceName, { fetchMissingMetadata: false })
+    await get().refreshGames(selectedPlatform.sourceName, {
+      fetchMissingMetadata: true,
+      forceRefetchMetadata: true
+    })
   },
   refreshGames: async (platformName, options) => {
+    const cachedGames = get().cachedGamesByPlatform[platformName]
+    const hasCachedGames = Object.prototype.hasOwnProperty.call(
+      get().cachedGamesByPlatform,
+      platformName
+    )
+
+    const applyGames = (games: GameEntry[]): GameEntry[] => {
+      const nextCache = {
+        ...get().cachedGamesByPlatform,
+        [platformName]: games
+      }
+
+      set({ cachedGamesByPlatform: nextCache })
+
+      const selectedPlatform = get().selectedPlatform
+      if (selectedPlatform?.sourceName !== platformName) {
+        return games
+      }
+
+      get().setGames(games)
+      return games
+    }
+
+    if (hasCachedGames) {
+      applyGames(cachedGames ?? [])
+
+      void window.api
+        .listGames(platformName, options)
+        .then((games) => {
+          applyGames(games)
+        })
+        .catch((error) => {
+          useAppStateStore
+            .getState()
+            .setErrorMessage(error instanceof Error ? error.message : 'Failed to load games.')
+        })
+
+      return cachedGames ?? []
+    }
+
     set({ gamesLoading: true })
 
     try {
       const games = await window.api.listGames(platformName, options)
-      get().setGames(games)
-      return games
+      return applyGames(games)
     } catch (error) {
       useAppStateStore
         .getState()

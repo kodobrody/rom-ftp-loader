@@ -38,11 +38,21 @@ export const useAppBootstrap = (): void => {
         setup.setConfig(savedConfig)
         downloads.setDownloadSnapshot(activeDownloads)
         library.setDownloadSnapshot(activeDownloads)
+        const cachedLibrary = await window.api.getLibraryCache()
 
         appState.setIsConfigured(ready)
 
         if (ready) {
-          await library.refreshPlatforms(savedConfig)
+          library.setLibraryCache(cachedLibrary)
+
+          if (
+            cachedLibrary.platforms.length > 0 ||
+            Object.keys(cachedLibrary.gamesByPlatform).length > 0
+          ) {
+            void library.refreshPlatforms(savedConfig)
+          } else {
+            await library.refreshPlatforms(savedConfig)
+          }
         }
       } catch (error) {
         if (!ignore) {

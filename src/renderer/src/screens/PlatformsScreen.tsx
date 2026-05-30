@@ -1,6 +1,12 @@
-import { faDownload, faFilter, faMagnifyingGlass, faRotateRight } from '@fortawesome/free-solid-svg-icons'
+import {
+  faDownload,
+  faFilter,
+  faFolder,
+  faMagnifyingGlass,
+  faRotateRight
+} from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card } from '@heroui/react'
+import { Button, Card, ProgressCircle } from '@heroui/react'
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStateStore } from '../store/appStateStore'
@@ -11,7 +17,11 @@ const PLATFORM_MENU_QUERY_KEY = 'menu'
 const PLATFORM_MENU_QUERY_VALUE = 'platforms'
 
 const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
-  return [...container.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+  return [
+    ...container.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+  ].filter(
     (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true'
   )
 }
@@ -23,7 +33,8 @@ export const PlatformsScreen = (): React.JSX.Element => {
     refreshPlatforms,
     showDownloadedOnly,
     toggleShowDownloadedOnly,
-    visiblePlatforms } = useLibraryStore()
+    visiblePlatforms
+  } = useLibraryStore()
   const location = useLocation()
   const navigate = useNavigate()
   const { setErrorMessage, setInfoMessage } = useAppStateStore()
@@ -81,7 +92,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
 
     if (showPlatformMenu && menuElement) {
       const focusableElements = getFocusableElements(menuElement)
-        ; (focusableElements[0] ?? menuElement).focus()
+      ;(focusableElements[0] ?? menuElement).focus()
       return
     }
 
@@ -95,7 +106,12 @@ export const PlatformsScreen = (): React.JSX.Element => {
   }, [showPlatformMenu])
 
   useEffect(() => {
-    if (platformsLoading || showPlatformMenu || visiblePlatforms.length === 0 || hasAutoFocusedPlatformsRef.current) {
+    if (
+      platformsLoading ||
+      showPlatformMenu ||
+      visiblePlatforms.length === 0 ||
+      hasAutoFocusedPlatformsRef.current
+    ) {
       return
     }
 
@@ -159,7 +175,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
 
   return (
     <section className="library-layout grid gap-4">
-      <Card className='overflow-visible'>
+      <Card className="overflow-visible">
         <Card.Content className="flex flex-row items-start justify-between gap-3 overflow-visible">
           <div className="flex gap-3">
             <Button
@@ -184,7 +200,10 @@ export const PlatformsScreen = (): React.JSX.Element => {
               Downloads
             </Button>
           </div>
-          <div className="relative overflow-visible">
+          <div className="relative flex items-center gap-2 overflow-visible">
+            {platformsLoading ? (
+              <ProgressCircle aria-label="Loading platforms" isIndeterminate size="sm" />
+            ) : null}
             <Button
               aria-expanded={showPlatformMenu}
               aria-haspopup="menu"
@@ -212,7 +231,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
                     variant="tertiary"
                   >
                     <FontAwesomeIcon icon={faRotateRight} />
-                    Refresh platforms
+                    Refresh
                   </Button>
                   <Button
                     fullWidth
@@ -234,9 +253,7 @@ export const PlatformsScreen = (): React.JSX.Element => {
 
       {platformsLoading ? (
         <Card>
-          <Card.Content className="text-center">
-            Loading platforms...
-          </Card.Content>
+          <Card.Content className="text-center">Loading platforms...</Card.Content>
         </Card>
       ) : visiblePlatforms.length === 0 ? (
         <Card>
@@ -253,17 +270,16 @@ export const PlatformsScreen = (): React.JSX.Element => {
         >
           {visiblePlatforms.map((platform) => (
             <Button
-              className="text-left transition flex flex-col h-40 w-full"
+              className="text-left transition flex flex-col items-center justify-center h-40 w-full gap-0"
               key={platform.id}
               onClick={() => {
                 navigate(`/platform/${encodeURIComponent(platform.id)}`)
               }}
-              variant='tertiary'
+              variant="tertiary"
             >
-              <span className="text-xl whitespace-normal text-center font-semibold uppercase tracking-[0.12em] text-zinc-400">
-                {platform.name}
-              </span>
-              <strong className="text-zinc-100">{platform.remoteGameCount} games</strong>
+              <FontAwesomeIcon className="text-6xl text-blue-300 mb-4" icon={faFolder} />
+              <span className=" whitespace-normal text-center text-zinc-400">{platform.name}</span>
+              <span className="text-zinc-400">{platform.remoteGameCount} games</span>
             </Button>
           ))}
         </div>

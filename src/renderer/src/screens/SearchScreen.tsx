@@ -1,3 +1,5 @@
+import { faArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Card, Chip } from '@heroui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
@@ -68,19 +70,18 @@ export const SearchScreen = (): React.JSX.Element => {
   return (
     <section className="grid gap-3">
       <Button
-        className="w-fit"
+        className="w-fit gap-2"
         onPress={() => {
           resetSearchSession()
           navigate('/')
         }}
         variant="tertiary"
       >
-        Back to platforms
+        <FontAwesomeIcon className="shrink-0" icon={faArrowLeft} />
+        Back to library
       </Button>
 
-      <Card
-        className={showOnScreenKeyboard ? 'pb-2' : ''}
-      >
+      <Card className={showOnScreenKeyboard ? 'pb-2' : ''}>
         <Card.Content className="grid gap-3 p-4">
           {searchIndexQuery.isLoading ? (
             <p className="grid min-h-24 place-items-center text-center text-sm text-zinc-400">
@@ -91,7 +92,9 @@ export const SearchScreen = (): React.JSX.Element => {
               Type to search across platforms.
             </p>
           ) : searchResults.length === 0 ? (
-            <p className="grid min-h-24 place-items-center text-center text-sm text-zinc-400">No matching games found.</p>
+            <p className="grid min-h-24 place-items-center text-center text-sm text-zinc-400">
+              No matching games found.
+            </p>
           ) : (
             <div className="grid max-h-[52vh] gap-3 overflow-auto pr-1">
               {searchResults.map((entry) => {

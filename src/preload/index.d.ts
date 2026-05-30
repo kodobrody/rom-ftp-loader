@@ -4,6 +4,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
 
@@ -19,6 +20,7 @@ declare global {
       loadConfigFromFile: (filePath: string) => Promise<AppConfig>
       testFtpConnection: (config: AppConfig) => Promise<boolean>
       testTwitchConnection: (config: AppConfig) => Promise<boolean>
+      getLibraryCache: () => Promise<LibraryCacheSnapshot>
       listPlatforms: () => Promise<PlatformSummary[]>
       listGames: (
         platformName: string,

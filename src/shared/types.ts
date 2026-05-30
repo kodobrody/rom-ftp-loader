@@ -50,6 +50,11 @@ export interface GameMetadataUpdate {
   status: 'found' | 'missing' | 'error'
 }
 
+export interface LibraryCacheSnapshot {
+  platforms: PlatformSummary[]
+  gamesByPlatform: Record<string, GameEntry[]>
+}
+
 export type DownloadQueueItemStatus = 'queued' | 'downloading' | 'completed' | 'error'
 
 export interface DownloadQueueItem {

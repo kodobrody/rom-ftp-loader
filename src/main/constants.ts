@@ -179,6 +179,7 @@ export const PLATFORM_DEFINITIONS: PlatformDefinition[] = [
 
 export const CONFIG_FILE_NAME = 'launcher-config.json'
 export const METADATA_CACHE_FILE_NAME = 'igdb-rom-cache.json'
+export const LIBRARY_CACHE_FILE_NAME = 'library-cache.json'
 export const IGDB_GAMES_URL = 'https://api.igdb.com/v4/games'
 export const TWITCH_TOKEN_URL = 'https://id.twitch.tv/oauth2/token'
 export const fetchFromMain = globalThis.fetch?.bind(globalThis)

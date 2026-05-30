@@ -42,14 +42,17 @@
     "@fortawesome/react-fontawesome": "^3.3.1",
     "@heroui/react": "^3.0.5",
     "@heroui/styles": "^3.0.5",
+    "@hookform/resolvers": "^5.4.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/react-query": "^5.100.9",
     "basic-ftp": "^6.0.1",
     "electron-updater": "^6.3.9",
     "node-fetch": "^3.3.2",
+    "react-hook-form": "^7.76.1",
     "react-router-dom": "^7.15.1",
     "ssh2-sftp-client": "^12.0.1",
     "tailwindcss": "^4.3.0",
+    "zod": "^4.4.3",
     "zustand": "^5.0.13"
   },
   "devDependencies": {

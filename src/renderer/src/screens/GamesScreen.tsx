@@ -1,4 +1,3 @@
-
 import { faSquare } from '@fortawesome/free-regular-svg-icons'
 import {
   faArrowLeft,
@@ -16,7 +15,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { formatBytes } from '../utils/formatting'
 
 const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
-  return [...container.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+  return [
+    ...container.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+  ].filter(
     (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true'
   )
 }
@@ -80,7 +83,7 @@ export const GamesScreen = (): React.JSX.Element => {
 
     if (showPlatformMenu && !selectionMode && menuElement) {
       const focusableElements = getFocusableElements(menuElement)
-        ; (focusableElements[0] ?? menuElement).focus()
+      ;(focusableElements[0] ?? menuElement).focus()
       return
     }
 
@@ -165,14 +168,18 @@ export const GamesScreen = (): React.JSX.Element => {
 
   return (
     <section className="library-layout grid gap-4">
-      <Card className='overflow-visible'>
+      <Card className="overflow-visible">
         <Card.Content className="flex flex-row flex-wrap items-start justify-between gap-3">
           <div className="flex flex-wrap gap-3">
             <Button isDisabled={selectionMode} onPress={() => navigate('/')} variant="tertiary">
               <FontAwesomeIcon icon={faArrowLeft} />
-              Back to platforms
+              Back to library
             </Button>
-            <Button isDisabled={selectionMode} onPress={() => navigate('/downloads')} variant="tertiary">
+            <Button
+              isDisabled={selectionMode}
+              onPress={() => navigate('/downloads')}
+              variant="tertiary"
+            >
               <FontAwesomeIcon icon={faDownload} />
               Downloads
             </Button>
@@ -190,7 +197,7 @@ export const GamesScreen = (): React.JSX.Element => {
             </Button>
             {showPlatformMenu && !selectionMode ? (
               <Card className={menuPanelClass} onKeyDown={handleMenuKeyDown}>
-                <Card.Content ref={platformMenuRef} role="menu" tabIndex={-1} className='gap-3'>
+                <Card.Content ref={platformMenuRef} role="menu" tabIndex={-1} className="gap-3">
                   <Button
                     fullWidth
                     onPress={() => {
@@ -275,7 +282,11 @@ export const GamesScreen = (): React.JSX.Element => {
               </Button>
             ) : null}
             {selectionMode ? (
-              <Button isDisabled={selectedGames.length === 0} onPress={clearSelection} variant="tertiary">
+              <Button
+                isDisabled={selectedGames.length === 0}
+                onPress={clearSelection}
+                variant="tertiary"
+              >
                 <FontAwesomeIcon icon={faXmark} />
                 Clear selection
               </Button>
@@ -283,9 +294,7 @@ export const GamesScreen = (): React.JSX.Element => {
           </div>
 
           {gamesLoading ? (
-            <p className="rounded-xl  bg-white/5 p-6 text-center text-zinc-400">
-              Loading games...
-            </p>
+            <p className="rounded-xl  bg-white/5 p-6 text-center text-zinc-400">Loading games...</p>
           ) : visibleGames.length === 0 ? (
             <p className="rounded-xl  bg-white/5 p-6 text-center text-zinc-400">
               {showDownloadedOnly
@@ -300,24 +309,28 @@ export const GamesScreen = (): React.JSX.Element => {
               {visibleGames.map((game, index) => {
                 const queueItem = downloadSnapshot.items.find((item) => item.gameId === game.id)
                 const checked = selectedGames.some((selectedGame) => selectedGame.id === game.id)
-                const isDownloading = queueItem && ['queued', 'downloading'].includes(queueItem.status)
+                const isDownloading =
+                  queueItem && ['queued', 'downloading'].includes(queueItem.status)
 
                 return (
                   <button
                     autoFocus={index === 0 && !showPlatformMenu}
-                    className={`group relative grid gap-3 overflow-hidden rounded-2xl border p-2 text-left transition ${checked ? 'border-blue-400 border-4' :
-                      game.downloaded
-                        ? 'border-green-400/40 bg-green-950/25'
-                        : 'border-white/10 bg-white/5 hover:bg-white/10'
-                      } ${isDownloading ? 'ring-1 ring-sky-300/40' : ''}`}
+                    className={`group relative grid gap-3 overflow-hidden rounded-2xl border p-2 text-left transition ${
+                      checked
+                        ? 'border-blue-400 border-4'
+                        : game.downloaded
+                          ? 'border-green-400/40 bg-green-950/25'
+                          : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    } ${isDownloading ? 'ring-1 ring-sky-300/40' : ''}`}
                     key={game.id}
                     onClick={() => gameTileClick(game)}
                     type="button"
                   >
                     {selectionMode && !isDownloading ? (
                       <span
-                        className={`absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-xs font-medium ${checked ? 'bg-blue-500/80 text-black' : 'bg-black/55 text-zinc-100'
-                          }`}
+                        className={`absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-xs font-medium ${
+                          checked ? 'bg-blue-500/80 text-black' : 'bg-black/55 text-zinc-100'
+                        }`}
                       >
                         {checked ? 'Selected' : 'Select'}
                       </span>
@@ -336,7 +349,9 @@ export const GamesScreen = (): React.JSX.Element => {
                       )}
                     </div>
 
-                    <strong className="line-clamp-2 text-sm text-zinc-100">{game.displayName}</strong>
+                    <strong className="line-clamp-2 text-sm text-zinc-100">
+                      {game.displayName}
+                    </strong>
                     {game.discLabel ? (
                       <Chip color="warning" size="md" variant="soft">
                         {game.discLabel}

@@ -12,6 +12,7 @@ import type {
   DownloadSnapshot,
   GameEntry,
   GameMetadataUpdate,
+  LibraryCacheSnapshot,
   PlatformSummary
 } from '../shared/types'
 import {
@@ -21,6 +22,7 @@ import {
   fetchFromMain,
   GENERIC_ROM_EXTENSIONS,
   IGDB_GAMES_URL,
+  LIBRARY_CACHE_FILE_NAME,
   METADATA_CACHE_FILE_NAME,
   PLATFORM_DEFINITIONS,
   TWITCH_TOKEN_URL
@@ -78,6 +80,8 @@ interface RomMetadataCache {
   entries: Record<string, RomMetadataCacheEntry>
 }
 
+interface LibraryCacheFile extends LibraryCacheSnapshot {}
+
 interface IgdbTokenCacheEntry {
   clientId: string
   clientSecret: string
@@ -126,6 +130,10 @@ const getMetadataCachePath = (): string => {
   return join(app.getPath('userData'), METADATA_CACHE_FILE_NAME)
 }
 
+const getLibraryCachePath = (): string => {
+  return join(app.getPath('userData'), LIBRARY_CACHE_FILE_NAME)
+}
+
 const readMetadataCache = async (): Promise<RomMetadataCache> => {
   try {
     const fileContents = await readFile(getMetadataCachePath(), 'utf8')
@@ -139,6 +147,28 @@ const readMetadataCache = async (): Promise<RomMetadataCache> => {
 const saveMetadataCache = async (cache: RomMetadataCache): Promise<void> => {
   await mkdir(app.getPath('userData'), { recursive: true })
   await writeFile(getMetadataCachePath(), JSON.stringify(cache, null, 2), 'utf8')
+}
+
+const readLibraryCache = async (): Promise<LibraryCacheSnapshot> => {
+  try {
+    const fileContents = await readFile(getLibraryCachePath(), 'utf8')
+    const parsed = JSON.parse(fileContents) as Partial<LibraryCacheFile>
+
+    return {
+      platforms: parsed.platforms ?? [],
+      gamesByPlatform: parsed.gamesByPlatform ?? {}
+    }
+  } catch {
+    return {
+      platforms: [],
+      gamesByPlatform: {}
+    }
+  }
+}
+
+const saveLibraryCache = async (cache: LibraryCacheSnapshot): Promise<void> => {
+  await mkdir(app.getPath('userData'), { recursive: true })
+  await writeFile(getLibraryCachePath(), JSON.stringify(cache, null, 2), 'utf8')
 }
 
 const normalizeTitle = (value: string): string => {
@@ -747,7 +777,15 @@ const listPlatforms = async (config: AppConfig): Promise<PlatformSummary[]> => {
       })
     }
 
-    return platforms.sort((left, right) => left.name.localeCompare(right.name))
+    const nextPlatforms = platforms.sort((left, right) => left.name.localeCompare(right.name))
+    const libraryCache = await readLibraryCache()
+
+    await saveLibraryCache({
+      platforms: nextPlatforms,
+      gamesByPlatform: libraryCache.gamesByPlatform
+    })
+
+    return nextPlatforms
   })
 }
 
@@ -858,6 +896,10 @@ const listGames = async (
       await saveMetadataCache(metadataCache)
       console.log(`[IGDB] Fetched ${fetchedCount} metadata entries for ${platformName}`)
     }
+
+    const libraryCache = await readLibraryCache()
+    libraryCache.gamesByPlatform[platformName] = games
+    await saveLibraryCache(libraryCache)
 
     if (forceRefetchMetadata && fetchedCount > 0 && fetchErrorCount === fetchedCount) {
       throw new Error(
@@ -1527,6 +1569,10 @@ ipcMain.handle('library:list-platforms', async () => {
   const config = await readConfigFromDisk()
   assertConfigured(config)
   return listPlatforms(config)
+})
+
+ipcMain.handle('library:get-cache', async () => {
+  return readLibraryCache()
 })
 
 ipcMain.handle(
