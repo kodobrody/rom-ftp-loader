@@ -1,7 +1,6 @@
 import { faSquare } from '@fortawesome/free-regular-svg-icons'
 import {
   faArrowLeft,
-  faDownload,
   faFilter,
   faListCheck,
   faSquareCheck,
@@ -12,6 +11,7 @@ import { Button, Card, Chip } from '@heroui/react'
 import { useLibraryStore } from '@renderer/store/libraryStore'
 import { useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { DownloadsButton } from '../components/DownloadsButton'
 import { formatBytes } from '../utils/formatting'
 
 const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
@@ -170,14 +170,7 @@ export const GamesScreen = (): React.JSX.Element => {
               <FontAwesomeIcon icon={faArrowLeft} />
               Back to library
             </Button>
-            <Button
-              isDisabled={selectionMode}
-              onPress={() => navigate('/downloads')}
-              variant="tertiary"
-            >
-              <FontAwesomeIcon icon={faDownload} />
-              Downloads
-            </Button>
+            <DownloadsButton />
           </div>
           <div className="relative overflow-visible">
             <Button

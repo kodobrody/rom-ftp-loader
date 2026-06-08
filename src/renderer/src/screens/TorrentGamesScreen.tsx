@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Card } from '@heroui/react'
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { DownloadsButton } from '../components/DownloadsButton'
 import { TorrentGameModal } from '../components/modals/TorrentGameModal'
 import { useTorrentStore } from '../store/torrentStore'
 import { formatBytes } from '../utils/formatting'
@@ -56,9 +57,7 @@ export const TorrentGamesScreen = (): React.JSX.Element => {
             <FontAwesomeIcon icon={faArrowLeft} />
             Back to platforms
           </Button>
-          <Button onPress={() => navigate('/downloads')} variant="tertiary">
-            Downloads
-          </Button>
+          <DownloadsButton />
         </Card.Content>
       </Card>
 

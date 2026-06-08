@@ -1,6 +1,6 @@
-import { faArrowLeft, faFolder } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faFolder, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip, ProgressCircle } from '@heroui/react'
+import { Button, Card, ProgressCircle } from '@heroui/react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTorrentStore } from '../store/torrentStore'
@@ -22,20 +22,14 @@ export const TorrentPlatformsScreen = (): React.JSX.Element => {
               <FontAwesomeIcon icon={faArrowLeft} />
               Back to library
             </Button>
-            <Chip color="default" size="md" variant="soft">
-              {platforms.length} platforms
-            </Chip>
-            <Chip color="default" size="md" variant="soft">
-              {browserSnapshot.files.length} files indexed
-            </Chip>
-            {browserSnapshot.sourceErrors.length > 0 ? (
-              <Chip color="warning" size="md" variant="soft">
-                {browserSnapshot.sourceErrors.length} source
-                {browserSnapshot.sourceErrors.length === 1 ? ' error' : ' errors'}
-              </Chip>
-            ) : null}
           </div>
           <div className="flex items-center gap-2">
+            {platforms.length > 0 ? (
+              <Button onPress={() => navigate('/torrents/search')} variant="tertiary">
+                <FontAwesomeIcon icon={faMagnifyingGlass} />
+                Search
+              </Button>
+            ) : null}
             {browserLoading ? (
               <ProgressCircle aria-label="Loading torrent data" isIndeterminate size="sm" />
             ) : null}

@@ -65,6 +65,7 @@ export interface TorrentGameGroup {
   cleanedName: string
   coverUrl: string | null
   metadataStatus: 'found' | 'missing' | 'error' | 'pending'
+  needsMetadataFetch: boolean
   platformDisplayName: string
   platformSourceName: string
   files: TorrentGameFile[]

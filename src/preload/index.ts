@@ -80,6 +80,11 @@ const api = {
     ipcRenderer.invoke('torrents:get-download-state') as Promise<TorrentDownloadSnapshot>,
   downloadTorrentFile: (torrentFileId: string) =>
     ipcRenderer.invoke('torrents:download-file', torrentFileId) as Promise<TorrentDownloadSnapshot>,
+  cancelTorrentDownload: (torrentFileId: string) =>
+    ipcRenderer.invoke(
+      'torrents:cancel-download',
+      torrentFileId
+    ) as Promise<TorrentDownloadSnapshot>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<void>,
   onTorrentBrowserState: (listener: (snapshot: TorrentBrowserSnapshot) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, snapshot: TorrentBrowserSnapshot) => {

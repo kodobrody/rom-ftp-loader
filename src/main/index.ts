@@ -189,6 +189,7 @@ interface RomMetadataCache {
 }
 
 const METADATA_MISSING_RETRY_MS = 7 * 24 * 60 * 60 * 1000
+const METADATA_ERROR_RETRY_MS = 24 * 60 * 60 * 1000
 
 interface LibraryCacheFile extends LibraryCacheSnapshot {}
 
@@ -263,7 +264,13 @@ const shouldRefreshCachedMetadata = (
   }
 
   if (metadata.status === 'error') {
-    return true
+    const errorFetchedAtMs = Date.parse(metadata.fetchedAt)
+
+    if (!Number.isFinite(errorFetchedAtMs)) {
+      return true
+    }
+
+    return Date.now() - errorFetchedAtMs >= METADATA_ERROR_RETRY_MS
   }
 
   if (metadata.status !== 'missing') {
@@ -1211,6 +1218,7 @@ const getTorrentGames = async (
           cachedMetadata?.cleanedName ?? (stripRomDecorators(file.romName) || file.romName),
         coverUrl: cachedMetadata?.coverUrl ?? null,
         metadataStatus: cachedMetadata?.status ?? (hasTwitchConfig ? 'missing' : 'pending'),
+        needsMetadataFetch: hasTwitchConfig && shouldRefreshCachedMetadata(cachedMetadata, false),
         platformDisplayName: file.matchedPlatformName,
         platformSourceName: file.matchedPlatformSourceName,
         files: [
@@ -3401,6 +3409,23 @@ ipcMain.handle('torrents:get-download-state', async () => currentTorrentDownload
 ipcMain.handle('torrents:download-file', async (_event, torrentFileId: string) => {
   const config = await readConfigFromDisk()
   return queueTorrentFileDownload(config, torrentFileId)
+})
+
+ipcMain.handle('torrents:cancel-download', async (_event, torrentFileId: string) => {
+  const client = activeTorrentClients.get(torrentFileId)
+
+  if (client) {
+    activeTorrentClients.delete(torrentFileId)
+    await destroyTorrentClient(client)
+  }
+
+  updateTorrentDownloadItem(torrentFileId, (item) => ({
+    ...item,
+    status: 'cancelled',
+    error: null
+  }))
+
+  return currentTorrentDownloadSnapshot
 })
 
 ipcMain.handle('torrents:refresh-browser-state', async () => {

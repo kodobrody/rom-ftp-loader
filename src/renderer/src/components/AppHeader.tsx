@@ -20,7 +20,9 @@ export const AppHeader = (): React.JSX.Element | null => {
     selectedPlatform: torrentSelectedPlatform,
     games: torrentGames,
     metadataFetchInProgress: torrentMetadataFetchInProgress,
-    metadataFetchPlatformSourceName: torrentMetadataFetchPlatformSourceName
+    metadataFetchPlatformSourceName: torrentMetadataFetchPlatformSourceName,
+    platforms: torrentPlatforms,
+    browserSnapshot
   } = useTorrentStore()
   const { openQuitConfirmModal } = useQuitConfirmModalStore()
   const location = useLocation()
@@ -34,15 +36,17 @@ export const AppHeader = (): React.JSX.Element | null => {
     ? ''
     : pathname === '/search'
       ? 'Search'
-      : pathname === '/downloads'
-        ? 'Downloads'
-        : isTorrentRoute
-          ? torrentSelectedPlatform
-            ? torrentSelectedPlatform.displayName
-            : 'Torrent Library'
-          : selectedPlatform
-            ? selectedPlatform.name
-            : 'Platforms'
+      : pathname === '/torrents/search'
+        ? 'Torrent Search'
+        : pathname === '/downloads'
+          ? 'Downloads'
+          : isTorrentRoute
+            ? torrentSelectedPlatform
+              ? torrentSelectedPlatform.displayName
+              : 'STOREnt'
+            : selectedPlatform
+              ? selectedPlatform.name
+              : 'Platforms'
 
   const downloadedGames = games.filter((game) => game.downloaded).length
   const gamesWithCover = games.filter((game) => Boolean(game.coverUrl)).length
@@ -119,6 +123,21 @@ export const AppHeader = (): React.JSX.Element | null => {
             <Chip color="default" size="md" variant="soft">
               {torrentGames.length} games
             </Chip>
+          </div>
+        ) : pathname === '/torrents' ? (
+          <div className="mt-3 flex flex-wrap gap-3">
+            <Chip color="default" size="md" variant="soft">
+              {torrentPlatforms.length} platforms
+            </Chip>
+            <Chip color="default" size="md" variant="soft">
+              {browserSnapshot.files.length} files indexed
+            </Chip>
+            {browserSnapshot.sourceErrors.length > 0 ? (
+              <Chip color="warning" size="md" variant="soft">
+                {browserSnapshot.sourceErrors.length} source
+                {browserSnapshot.sourceErrors.length === 1 ? ' error' : ' errors'}
+              </Chip>
+            ) : null}
           </div>
         ) : !showSetup && isLibraryRoute ? (
           <div className="mt-3 flex flex-wrap gap-3">

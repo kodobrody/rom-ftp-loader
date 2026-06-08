@@ -9,7 +9,7 @@ import {
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Chip, Modal } from '@heroui/react'
 import { useTorrentStore } from '@renderer/store/torrentStore'
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import type { IgdbSearchResult } from '../../../../shared/types'
 import { formatBytes } from '../../utils/formatting'
 
@@ -42,6 +42,18 @@ export const TorrentGameModal = (): React.JSX.Element | null => {
     resetManualState()
     closeTorrentGame()
   }
+
+  // React Aria's ModalOverlay (child) applies a body scroll lock in its useLayoutEffect.
+  // Parent useLayoutEffect runs after child effects, so we can undo it here.
+  useLayoutEffect(() => {
+    if (!activeTorrentGame) return
+    document.body.style.removeProperty('overflow')
+    document.body.style.removeProperty('position')
+    document.body.style.removeProperty('top')
+    document.body.style.removeProperty('left')
+    document.body.style.removeProperty('width')
+    document.documentElement.style.removeProperty('overflow')
+  }, [activeTorrentGame])
 
   if (!activeTorrentGame) return null
   const game = activeTorrentGame
@@ -92,6 +104,13 @@ export const TorrentGameModal = (): React.JSX.Element | null => {
     ko: 'KO',
     kor: 'KO',
     korean: 'KO',
+    nl: 'NL',
+    dut: 'NL',
+    nld: 'NL',
+    dutch: 'NL',
+    no: 'NO',
+    nor: 'NO',
+    norwegian: 'NO',
     pl: 'PL',
     pol: 'PL',
     polish: 'PL',
@@ -101,6 +120,31 @@ export const TorrentGameModal = (): React.JSX.Element | null => {
     ru: 'RU',
     rus: 'RU',
     russian: 'RU',
+    sv: 'SV',
+    swe: 'SV',
+    swedish: 'SV',
+    da: 'DA',
+    dan: 'DA',
+    danish: 'DA',
+    fi: 'FI',
+    fin: 'FI',
+    finnish: 'FI',
+    cs: 'CS',
+    cze: 'CS',
+    ces: 'CS',
+    czech: 'CS',
+    hu: 'HU',
+    hun: 'HU',
+    hungarian: 'HU',
+    tr: 'TR',
+    tur: 'TR',
+    turkish: 'TR',
+    ar: 'AR',
+    ara: 'AR',
+    arabic: 'AR',
+    he: 'HE',
+    heb: 'HE',
+    hebrew: 'HE',
     zh: 'ZH',
     chi: 'ZH',
     zho: 'ZH',
@@ -109,39 +153,89 @@ export const TorrentGameModal = (): React.JSX.Element | null => {
     tw: 'ZH'
   }
 
-  const extractInfoPills = (fileName: string): string[] => {
-    const baseName = fileName.replace(/\.[^.]+$/, '')
-    const parts: string[] = []
-    for (const match of baseName.matchAll(/\(([^)]+)\)|\[([^\]]+)\]/g)) {
-      const group = match[1] ?? match[2]
-      if (group)
-        parts.push(
-          ...group
-            .split(',')
-            .map((p) => p.trim())
-            .filter(Boolean)
-        )
+  const infoPills = (() => {
+    // Extract raw tokens from a filename's bracket groups
+    const extractTokens = (fileName: string): string[] => {
+      const baseName = fileName.replace(/\.[^.]+$/, '')
+      const parts: string[] = []
+      for (const match of baseName.matchAll(/\(([^)]+)\)|\[([^\]]+)\]/g)) {
+        const group = match[1] ?? match[2]
+        if (group)
+          parts.push(
+            ...group
+              .split(',')
+              .map((p) => p.trim())
+              .filter(Boolean)
+          )
+      }
+      return parts
     }
-    const normalized = parts.map((p) => p.toLowerCase().replace(/[^a-z0-9]/g, ''))
-    const regionToken = normalized.find((t) => REGION_TOKENS.has(t))
-    const regionPill = regionToken
-      ? `Region: ${regionToken === 'us' ? 'USA' : regionToken.toUpperCase()}`
-      : null
-    const versionSource = parts.find((p) => /\bv(?:er(?:sion)?)?\s*\d+/i.test(p))
-    const versionMatch = versionSource?.match(/\bv(?:er(?:sion)?)?\s*([0-9]+(?:\.[0-9]+)*)/i)
-    const versionPill = versionMatch
-      ? `Version: ${versionMatch[1].replace(/(?:\.0+)+$/g, '').replace(/\.$/, '') || versionMatch[1]}`
-      : null
-    const languages = Array.from(
-      new Set(normalized.map((t) => LANGUAGE_MAP[t]).filter((v): v is string => Boolean(v)))
-    )
-    const languagePill = languages.length > 0 ? `Languages: ${languages.join(', ')}` : null
-    const demoPill =
-      parts.some((p) => /\bdemo\b/i.test(p)) || /\bdemo\b/i.test(baseName) ? 'Demo' : null
-    return [regionPill, versionPill, languagePill, demoPill].filter((p): p is string => Boolean(p))
-  }
 
-  const infoPills = extractInfoPills(representativeFileName)
+    type FileInfo = {
+      region: string | null
+      version: string | null
+      languages: string[]
+      isDemo: boolean
+    }
+
+    const parseFile = (fileName: string): FileInfo => {
+      const parts = extractTokens(fileName)
+      const normalized = parts.map((p) => p.toLowerCase().replace(/[^a-z0-9]/g, ''))
+
+      const regionToken = normalized.find((t) => REGION_TOKENS.has(t))
+      const region = regionToken ? (regionToken === 'us' ? 'USA' : regionToken.toUpperCase()) : null
+
+      const versionSource = parts.find((p) => /\bv(?:er(?:sion)?)?\s*\d+/i.test(p))
+      const versionMatch = versionSource?.match(/\bv(?:er(?:sion)?)?\s*([0-9]+(?:\.[0-9]+)*)/i)
+      const version = versionMatch
+        ? versionMatch[1].replace(/(?:\.0+)+$/g, '').replace(/\.$/, '') || versionMatch[1]
+        : null
+
+      const languages = Array.from(
+        new Set(normalized.map((t) => LANGUAGE_MAP[t]).filter((v): v is string => Boolean(v)))
+      )
+
+      const baseName = fileName.replace(/\.[^.]+$/, '')
+      const isDemo = parts.some((p) => /\bdemo\b/i.test(p)) || /\bdemo\b/i.test(baseName)
+
+      return { region, version, languages, isDemo }
+    }
+
+    const perFile = game.files.map((f) => parseFile(f.fileName))
+
+    // Region
+    const regions = Array.from(
+      new Set(perFile.map((f) => f.region).filter((r): r is string => r !== null))
+    )
+    const regionPill = regions.length > 0 ? `Region: ${regions.join(', ')}` : null
+
+    // Version — sort semver-style (numeric segments, lowest to highest)
+    const rawVersions = Array.from(
+      new Set(perFile.map((f) => f.version).filter((v): v is string => v !== null))
+    )
+    const sortedVersions = rawVersions.sort((a, b) => {
+      const aParts = a.split('.').map(Number)
+      const bParts = b.split('.').map(Number)
+      const len = Math.max(aParts.length, bParts.length)
+      for (let i = 0; i < len; i++) {
+        const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0)
+        if (diff !== 0) return diff
+      }
+      return 0
+    })
+    const versionPill = sortedVersions.length > 0 ? `Version: ${sortedVersions.join(', ')}` : null
+
+    // Languages: union across all releases
+    const allLanguages = Array.from(new Set(perFile.flatMap((f) => f.languages)))
+    const languagePill = allLanguages.length > 0 ? `Languages: ${allLanguages.join(', ')}` : null
+
+    // Demo: all demo → "Demo", none → null, mixed → "Release: Demo / Full version"
+    const demoCount = perFile.filter((f) => f.isDemo).length
+    const demoPill =
+      demoCount === 0 ? null : demoCount === perFile.length ? 'Demo' : 'Release: Demo, Full version'
+
+    return [regionPill, versionPill, languagePill, demoPill].filter((p): p is string => Boolean(p))
+  })()
   const fileSizes = game.files.map((f) => f.size)
   const minSize = Math.min(...fileSizes)
   const maxSize = Math.max(...fileSizes)

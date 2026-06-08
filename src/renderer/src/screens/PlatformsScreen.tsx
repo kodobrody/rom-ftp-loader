@@ -1,14 +1,16 @@
 import {
-  faDownload,
   faFilter,
   faFolder,
   faMagnifyingGlass,
-  faRotateRight
+  faRotateRight,
+  faSkullCrossbones,
+  faStore
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Card, ProgressCircle } from '@heroui/react'
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { DownloadsButton } from '../components/DownloadsButton'
 import { useAppStateStore } from '../store/appStateStore'
 import { useLibraryStore } from '../store/libraryStore'
 import { useSearchStore } from '../store/searchStore'
@@ -200,13 +202,11 @@ export const PlatformsScreen = (): React.JSX.Element => {
               <FontAwesomeIcon icon={faMagnifyingGlass} />
               Search
             </Button>
-            <Button onPress={() => navigate('/downloads')} variant="tertiary">
-              <FontAwesomeIcon icon={faDownload} />
-              Downloads
-            </Button>
+            <DownloadsButton />
             <Button onPress={() => navigate('/torrents')} variant="tertiary">
-              <FontAwesomeIcon icon={faFolder} />
-              Torrent library
+              <FontAwesomeIcon icon={faSkullCrossbones} />
+              <FontAwesomeIcon icon={faStore} />
+              STOREnt
             </Button>
           </div>
           <div className="relative flex items-center gap-2 overflow-visible">

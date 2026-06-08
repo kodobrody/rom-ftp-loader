@@ -75,6 +75,7 @@ interface TorrentStore {
   closeTorrentGame: () => void
   patchGameMetadata: (gameId: string, metadata: GameMetadataUpdate) => void
   queueDownload: (torrentFileId: string) => Promise<void>
+  cancelTorrentDownload: (torrentFileId: string) => Promise<void>
   downloadFile: (torrentFileId: string) => Promise<void>
 }
 
@@ -154,7 +155,7 @@ export const useTorrentStore = create<TorrentStore>((set, get) => ({
 
     const games = await get().loadGames(platform.sourceName)
 
-    const gamesNeedingMetadata = games.filter((g) => g.metadataStatus !== 'found')
+    const gamesNeedingMetadata = games.filter((g) => g.needsMetadataFetch)
 
     if (gamesNeedingMetadata.length === 0) {
       return
@@ -190,7 +191,8 @@ export const useTorrentStore = create<TorrentStore>((set, get) => ({
                     displayName: metadata.displayName || g.displayName,
                     cleanedName: metadata.cleanedName || g.cleanedName,
                     coverUrl: metadata.coverUrl,
-                    metadataStatus: metadata.status
+                    metadataStatus: metadata.status,
+                    needsMetadataFetch: false
                   }
             )
           }))
@@ -318,6 +320,18 @@ export const useTorrentStore = create<TorrentStore>((set, get) => ({
     } catch (error) {
       appState.setErrorMessage(
         error instanceof Error ? error.message : 'Failed to start torrent download.'
+      )
+    }
+  },
+  cancelTorrentDownload: async (torrentFileId) => {
+    const appState = useAppStateStore.getState()
+
+    try {
+      const downloadSnapshot = await window.api.cancelTorrentDownload(torrentFileId)
+      set({ downloadSnapshot })
+    } catch (error) {
+      appState.setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to cancel torrent download.'
       )
     }
   },
