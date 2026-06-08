@@ -11,21 +11,11 @@ export const DownloadsScreen = (): React.JSX.Element => {
   const { clearQueueHistory, clearableDownloadCount, downloadSnapshot } = useDownloadsStore()
   const {
     downloadSnapshot: torrentSnapshot,
-    setDownloadSnapshot: setTorrentSnapshot,
-    cancelTorrentDownload
+    cancelTorrentDownload,
+    clearTorrentHistory
   } = useTorrentStore()
   const navigate = useNavigate()
   const [pendingCancelId, setPendingCancelId] = useState<string | null>(null)
-
-  const clearTorrentHistory = async (): Promise<void> => {
-    const cleared = torrentSnapshot.items.filter((item) =>
-      ['queued', 'downloading', 'extracting'].includes(item.status)
-    )
-    setTorrentSnapshot({
-      active: cleared.some((i) => ['queued', 'downloading', 'extracting'].includes(i.status)),
-      items: cleared
-    })
-  }
 
   const clearableTorrentCount = torrentSnapshot.items.filter(
     (item) => !['queued', 'downloading', 'extracting'].includes(item.status)
@@ -169,11 +159,9 @@ export const DownloadsScreen = (): React.JSX.Element => {
                                 ? 'success'
                                 : item.status === 'error'
                                   ? 'danger'
-                                  : item.status === 'cancelled'
-                                    ? 'default'
-                                    : item.status === 'downloading' || item.status === 'extracting'
-                                      ? 'accent'
-                                      : 'warning'
+                                  : item.status === 'downloading' || item.status === 'extracting'
+                                    ? 'accent'
+                                    : 'warning'
                             }
                             size="sm"
                             variant="soft"

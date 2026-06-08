@@ -57,6 +57,7 @@ declare global {
       getTorrentDownloadState: () => Promise<TorrentDownloadSnapshot>
       downloadTorrentFile: (torrentFileId: string) => Promise<TorrentDownloadSnapshot>
       cancelTorrentDownload: (torrentFileId: string) => Promise<TorrentDownloadSnapshot>
+      clearTorrentHistory: () => Promise<TorrentDownloadSnapshot>
       quitApp: () => Promise<void>
       onTorrentBrowserState: (listener: (snapshot: TorrentBrowserSnapshot) => void) => () => void
       onDownloadProgress: (listener: (snapshot: DownloadSnapshot) => void) => () => void

@@ -76,6 +76,7 @@ interface TorrentStore {
   patchGameMetadata: (gameId: string, metadata: GameMetadataUpdate) => void
   queueDownload: (torrentFileId: string) => Promise<void>
   cancelTorrentDownload: (torrentFileId: string) => Promise<void>
+  clearTorrentHistory: () => Promise<void>
   downloadFile: (torrentFileId: string) => Promise<void>
 }
 
@@ -333,6 +334,14 @@ export const useTorrentStore = create<TorrentStore>((set, get) => ({
       appState.setErrorMessage(
         error instanceof Error ? error.message : 'Failed to cancel torrent download.'
       )
+    }
+  },
+  clearTorrentHistory: async () => {
+    try {
+      const downloadSnapshot = await window.api.clearTorrentHistory()
+      set({ downloadSnapshot })
+    } catch {
+      /* ignore */
     }
   },
   downloadFile: async (torrentFileId) => {

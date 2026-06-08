@@ -1411,6 +1411,18 @@ const runTorrentFileDownload = async (
     }
 
     activeTorrentClients.set(downloadItem.id, torrentClient)
+
+    // If the item was cancelled (and removed) while the client was being created, bail out.
+    const stillExists = currentTorrentDownloadSnapshot.items.some(
+      (item) => item.id === downloadItem.id
+    )
+
+    if (!stillExists) {
+      activeTorrentClients.delete(downloadItem.id)
+      await destroyTorrentClient(torrentClient)
+      return
+    }
+
     updateTorrentDownloadItem(downloadItem.id, (item) => ({
       ...item,
       status: 'downloading',
@@ -3419,12 +3431,28 @@ ipcMain.handle('torrents:cancel-download', async (_event, torrentFileId: string)
     await destroyTorrentClient(client)
   }
 
+  // Mark as cancelled so the in-flight runTorrentFileDownload can detect it and bail out,
+  // then immediately remove it from the list.
   updateTorrentDownloadItem(torrentFileId, (item) => ({
     ...item,
     status: 'cancelled',
     error: null
   }))
 
+  const kept = currentTorrentDownloadSnapshot.items.filter(
+    (item) => item.torrentFileId !== torrentFileId
+  )
+  setTorrentDownloadItems(kept)
+
+  return currentTorrentDownloadSnapshot
+})
+
+ipcMain.handle('torrents:clear-history', async () => {
+  const activeStatuses = ['queued', 'downloading', 'extracting']
+  const kept = currentTorrentDownloadSnapshot.items.filter((item) =>
+    activeStatuses.includes(item.status)
+  )
+  setTorrentDownloadItems(kept)
   return currentTorrentDownloadSnapshot
 })
 

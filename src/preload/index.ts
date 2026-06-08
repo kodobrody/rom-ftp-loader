@@ -85,6 +85,8 @@ const api = {
       'torrents:cancel-download',
       torrentFileId
     ) as Promise<TorrentDownloadSnapshot>,
+  clearTorrentHistory: () =>
+    ipcRenderer.invoke('torrents:clear-history') as Promise<TorrentDownloadSnapshot>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<void>,
   onTorrentBrowserState: (listener: (snapshot: TorrentBrowserSnapshot) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, snapshot: TorrentBrowserSnapshot) => {
