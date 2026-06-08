@@ -1,10 +1,22 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import AdmZip from 'adm-zip'
 import { Client, FileType } from 'basic-ftp'
 import { spawn } from 'child_process'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { existsSync } from 'fs'
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises'
-import { dirname, extname, join, posix } from 'path'
+import { createWriteStream, existsSync } from 'fs'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile
+} from 'fs/promises'
+import { basename, dirname, extname, join, posix } from 'path'
 import SftpClient from 'ssh2-sftp-client'
 import type {
   AppConfig,
@@ -14,7 +26,16 @@ import type {
   GameMetadataUpdate,
   IgdbSearchResult,
   LibraryCacheSnapshot,
-  PlatformSummary
+  PlatformSummary,
+  TorrentBrowserSnapshot,
+  TorrentDownloadItem,
+  TorrentDownloadSnapshot,
+  TorrentFileEntry,
+  TorrentGameGroup,
+  TorrentMatchConfidence,
+  TorrentPlatformSummary,
+  TorrentSource,
+  TorrentUploadMode
 } from '../shared/types'
 import {
   CONFIG_FILE_NAME,
@@ -26,15 +47,37 @@ import {
   LIBRARY_CACHE_FILE_NAME,
   METADATA_CACHE_FILE_NAME,
   PLATFORM_DEFINITIONS,
+  TORRENT_BROWSER_CACHE_FILE_NAME,
   TWITCH_TOKEN_URL
 } from './constants'
 
 let mainWindow: BrowserWindow | null = null
 let currentDownloadSnapshot: DownloadSnapshot = emptySnapshot()
+let currentTorrentBrowserSnapshot: TorrentBrowserSnapshot = {
+  files: [],
+  resolvedNames: {},
+  sourceErrors: []
+}
+let currentTorrentDownloadSnapshot: TorrentDownloadSnapshot = { active: false, items: [] }
 let activeDownloadClient: RemoteClient | null = null
 let activeDownloadingGameId: string | null = null
 const cancelledGameIds = new Set<string>()
+const activeTorrentClients = new Map<string, TorrentClientInstance>()
+const torrentFileLookup = new Map<
+  string,
+  {
+    source: TorrentSource
+    relativePath: string
+    fileName: string
+    size: number
+    platformName: string
+    matchedPlatformName: string
+    matchedPlatformSourceName: string
+  }
+>()
+let webTorrentConstructorPromise: Promise<WebTorrentConstructor> | null = null
 
+let torrentBrowserRefreshPromise: Promise<TorrentBrowserSnapshot> | null = null
 type RemoteProtocol = 'ftp' | 'ftps' | 'sftp'
 type FileServiceType = AppConfig['fileServiceType']
 
@@ -63,6 +106,47 @@ interface RemoteClient {
   setDownloadProgressHandler: (handler: DownloadProgressHandler) => void
   abortActiveTransfer: () => void
 }
+
+interface TorrentReadableStream {
+  once: (event: string, listener: (...args: unknown[]) => void) => TorrentReadableStream
+  destroy: () => void
+  pipe: (destination: ReturnType<typeof createWriteStream>) => ReturnType<typeof createWriteStream>
+}
+
+interface TorrentFileHandle {
+  path?: string
+  name?: string
+  length?: number
+  downloaded?: number
+  select?: () => void
+  deselect?: () => void
+  createReadStream?: () => TorrentReadableStream
+}
+
+interface TorrentInstance {
+  name?: string
+  files?: TorrentFileHandle[]
+  downloaded?: number
+  on: (event: string, listener: (...args: unknown[]) => void) => void
+}
+
+interface TorrentClientInstance {
+  add: (
+    torrentId: string,
+    options: { destroyStoreOnDestroy: boolean; uploads?: number | false; path?: string },
+    onTorrent: (torrent: TorrentInstance) => void
+  ) => TorrentInstance
+  once: (event: 'error', listener: (error: unknown) => void) => void
+  off: (event: 'error', listener: (error: unknown) => void) => void
+  destroy: (callback: () => void) => void
+}
+
+type WebTorrentConstructor = new (options: {
+  dht: boolean
+  tracker: boolean
+  seedOutgoingConnections?: boolean
+  uploadLimit?: number
+}) => TorrentClientInstance
 
 interface RommPlatformDto {
   id?: number
@@ -104,6 +188,8 @@ interface RomMetadataCache {
 }
 
 const METADATA_MISSING_RETRY_MS = 7 * 24 * 60 * 60 * 1000
+const TORRENT_METADATA_TIMEOUT_MS = 120_000
+const TORRENT_BROWSER_METADATA_TIMEOUT_MS = 10 * 60 * 1000 // 10 min — large torrents (e.g. Minerva_Myrient) have huge info dicts
 
 interface LibraryCacheFile extends LibraryCacheSnapshot {}
 
@@ -501,6 +587,1185 @@ const getErrorMessage = (error: unknown): string => {
   return 'Unknown error'
 }
 
+const createRuntimeId = (): string => {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+const normalizeTorrentPath = (value: string): string => {
+  return value.replace(/\\/g, '/').replace(/^\/+/, '').trim()
+}
+
+const moveExtractedEntry = async (
+  sourcePath: string,
+  destinationDirectory: string
+): Promise<void> => {
+  const sourceStats = await stat(sourcePath)
+  const destinationPath = join(destinationDirectory, basename(sourcePath))
+
+  if (sourceStats.isDirectory()) {
+    await mkdir(destinationPath, { recursive: true })
+
+    const entries = await readdir(sourcePath, { withFileTypes: true })
+
+    for (const entry of entries) {
+      await moveExtractedEntry(join(sourcePath, entry.name), destinationPath)
+    }
+
+    await rm(sourcePath, { recursive: true, force: true })
+    return
+  }
+
+  if (existsSync(destinationPath)) {
+    await rm(destinationPath, { recursive: true, force: true })
+  }
+
+  await rename(sourcePath, destinationPath).catch(async () => {
+    await copyFile(sourcePath, destinationPath)
+    await unlink(sourcePath)
+  })
+}
+
+const extractArchiveIfNeeded = async (archivePath: string): Promise<void> => {
+  const fileExtension = extname(archivePath).toLowerCase()
+  const archiveHeader = await readFile(archivePath)
+    .then((buffer) => buffer.subarray(0, 4))
+    .catch(() => Buffer.alloc(0))
+  const hasZipSignature =
+    archiveHeader.length >= 4 &&
+    archiveHeader[0] === 0x50 &&
+    archiveHeader[1] === 0x4b &&
+    (archiveHeader[2] === 0x03 || archiveHeader[2] === 0x05 || archiveHeader[2] === 0x07) &&
+    (archiveHeader[3] === 0x04 || archiveHeader[3] === 0x06 || archiveHeader[3] === 0x08)
+
+  if (fileExtension !== '.zip' && !hasZipSignature) {
+    return
+  }
+
+  const archiveDirectory = dirname(archivePath)
+  const extractionRoot = await mkdtemp(join(archiveDirectory, '.games2-extract-'))
+
+  try {
+    const archive = new AdmZip(archivePath)
+    const entries = archive.getEntries()
+
+    if (entries.length === 0) {
+      throw new Error(`Archive ${archivePath} did not contain any files.`)
+    }
+
+    try {
+      archive.extractAllTo(extractionRoot, true)
+    } catch (error) {
+      throw new Error(`Failed to extract ${archivePath}: ${getErrorMessage(error)}`)
+    }
+
+    const extractedEntries = await readdir(extractionRoot, { withFileTypes: true })
+
+    if (extractedEntries.length === 0) {
+      throw new Error(`Archive ${archivePath} did not contain any files.`)
+    }
+
+    const normalizedSourceRoot =
+      extractedEntries.length === 1 && extractedEntries[0].isDirectory()
+        ? join(extractionRoot, extractedEntries[0].name)
+        : extractionRoot
+    const normalizedEntries = await readdir(normalizedSourceRoot, { withFileTypes: true })
+
+    for (const entry of normalizedEntries) {
+      await moveExtractedEntry(join(normalizedSourceRoot, entry.name), archiveDirectory)
+    }
+  } finally {
+    await rm(extractionRoot, { recursive: true, force: true })
+  }
+}
+
+const getDefaultTorrentLabel = (
+  sourceType: TorrentSource['sourceType'],
+  source: string
+): string => {
+  if (sourceType === 'file') {
+    const normalizedSource = source.replace(/\\/g, '/')
+    return normalizedSource.split('/').pop() || 'Torrent file'
+  }
+
+  const magnetMatch = source.match(/[?&]dn=([^&]+)/i)
+
+  if (magnetMatch?.[1]) {
+    try {
+      return decodeURIComponent(magnetMatch[1])
+    } catch {
+      return magnetMatch[1]
+    }
+  }
+
+  return 'Magnet link'
+}
+
+const normalizeTorrentSourceValue = (
+  sourceType: TorrentSource['sourceType'],
+  source: string
+): string => {
+  const trimmedSource = source.trim()
+
+  if (
+    sourceType === 'magnet' &&
+    trimmedSource.startsWith('magnet:') &&
+    !trimmedSource.startsWith('magnet:?')
+  ) {
+    const normalized = trimmedSource.replace(/^magnet:/i, 'magnet:?')
+    console.log('[TORRENT] normalized source', {
+      sourceType,
+      source,
+      normalized
+    })
+    return normalized
+  }
+
+  return trimmedSource
+}
+
+const sanitizeTorrentSources = (value: unknown): TorrentSource[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null
+      }
+
+      const rawEntry = entry as Partial<TorrentSource>
+      const sourceType = rawEntry.sourceType === 'file' ? 'file' : 'magnet'
+      const source = normalizeTorrentSourceValue(sourceType, String(rawEntry.source ?? ''))
+
+      if (!source) {
+        return null
+      }
+
+      const label =
+        String(rawEntry.label ?? '').trim() || getDefaultTorrentLabel(sourceType, source)
+      const resolvedName = String(rawEntry.resolvedName ?? '').trim() || undefined
+
+      const sanitizedSource: TorrentSource = {
+        id: String(rawEntry.id ?? '').trim() || createRuntimeId(),
+        label,
+        sourceType,
+        source
+      }
+
+      if (resolvedName) {
+        sanitizedSource.resolvedName = resolvedName
+      }
+
+      return sanitizedSource
+    })
+    .filter((entry): entry is TorrentSource => entry !== null)
+}
+
+const sanitizeTorrentUploadMode = (value: unknown): TorrentUploadMode => {
+  const normalizedValue = String(value ?? '')
+    .trim()
+    .toLowerCase()
+
+  if (normalizedValue === 'always') {
+    return 'always'
+  }
+
+  if (normalizedValue === 'never') {
+    return 'never'
+  }
+
+  return 'when_downloading'
+}
+
+const normalizePlatformTokens = (value: string): string[] => {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+const resolveTorrentPlatform = (
+  platformName: string
+): {
+  matchedPlatformName: string
+  matchedPlatformSourceName: string
+  matchConfidence: TorrentMatchConfidence
+} => {
+  const normalizedInput = normalizePlatformKey(platformName)
+
+  for (const definition of PLATFORM_DEFINITIONS) {
+    const exactNames = [definition.displayName, ...definition.aliases]
+
+    if (exactNames.some((candidate) => normalizePlatformKey(candidate) === normalizedInput)) {
+      return {
+        matchedPlatformName: definition.displayName,
+        matchedPlatformSourceName: definition.aliases[0] ?? slugify(definition.displayName),
+        matchConfidence: 'exact'
+      }
+    }
+  }
+
+  const inputTokens = new Set(normalizePlatformTokens(platformName))
+  const inputDigits = normalizedInput.match(/\d+/g)?.join('') ?? ''
+  let bestMatch: { definition: PlatformDefinition; score: number } | null = null
+
+  for (const definition of PLATFORM_DEFINITIONS) {
+    const candidateNames = [definition.displayName, ...definition.aliases]
+    let bestCandidateScore = 0
+
+    for (const candidateName of candidateNames) {
+      const normalizedCandidate = normalizePlatformKey(candidateName)
+      const candidateTokens = new Set(normalizePlatformTokens(candidateName))
+      const overlapCount = [...inputTokens].filter((token) => candidateTokens.has(token)).length
+      const tokenScore =
+        candidateTokens.size > 0
+          ? overlapCount / Math.max(candidateTokens.size, inputTokens.size, 1)
+          : 0
+      // Weight forward inclusion by coverage: longer match covering more of the input scores higher
+      // (e.g. 'gameboyadvance' beating 'gameboy' when input is 'nintendogameboyadvance')
+      const forwardCoverageScore =
+        normalizedInput.includes(normalizedCandidate) && normalizedCandidate.length > 0
+          ? (normalizedCandidate.length / normalizedInput.length) * 0.9
+          : 0
+      // Reverse inclusion: input is fully contained in candidate — high confidence broad match
+      const reverseCoverageScore = normalizedCandidate.includes(normalizedInput) ? 0.88 : 0
+      const inclusionScore = Math.max(forwardCoverageScore, reverseCoverageScore)
+      const candidateDigits = normalizedCandidate.match(/\d+/g)?.join('') ?? ''
+      const digitBonus = inputDigits && candidateDigits === inputDigits ? 0.12 : 0
+
+      bestCandidateScore = Math.max(
+        bestCandidateScore,
+        tokenScore + digitBonus,
+        inclusionScore + digitBonus
+      )
+    }
+
+    if (!bestMatch || bestCandidateScore > bestMatch.score) {
+      bestMatch = {
+        definition,
+        score: bestCandidateScore
+      }
+    }
+  }
+
+  if (bestMatch && bestMatch.score >= 0.52) {
+    return {
+      matchedPlatformName: bestMatch.definition.displayName,
+      matchedPlatformSourceName:
+        bestMatch.definition.aliases[0] ?? slugify(bestMatch.definition.displayName),
+      matchConfidence: 'fuzzy'
+    }
+  }
+
+  return {
+    matchedPlatformName: titleCasePlatformName(platformName),
+    matchedPlatformSourceName: slugify(platformName) || 'misc',
+    matchConfidence: 'fallback'
+  }
+}
+
+const extractTorrentFileEntry = (
+  source: TorrentSource,
+  torrentFile: { path?: string; name?: string; length?: number }
+): TorrentFileEntry | null => {
+  const relativePath = normalizeTorrentPath(String(torrentFile.path ?? torrentFile.name ?? ''))
+
+  if (!relativePath) {
+    return null
+  }
+
+  const pathSegments = relativePath.split('/').filter(Boolean)
+
+  if (pathSegments.length < 4 || pathSegments[0].toLowerCase() !== 'minerva_myrient') {
+    return null
+  }
+
+  const releaseGroupName = pathSegments[1]
+  const platformName = pathSegments[2]
+  const fileName = pathSegments[pathSegments.length - 1]
+  const romName = fileName.replace(/\.[^.]+$/, '')
+  const resolvedPlatform = resolveTorrentPlatform(platformName)
+
+  return {
+    id: `${source.id}::${relativePath.toLowerCase()}`,
+    torrentId: source.id,
+    torrentLabel: source.label,
+    releaseGroupName,
+    platformName,
+    matchedPlatformName: resolvedPlatform.matchedPlatformName,
+    matchedPlatformSourceName: resolvedPlatform.matchedPlatformSourceName,
+    matchConfidence: resolvedPlatform.matchConfidence,
+    romName,
+    fileName,
+    relativePath,
+    size: Math.max(0, Number(torrentFile.length ?? 0))
+  }
+}
+
+const loadWebTorrentConstructor = async (): Promise<WebTorrentConstructor> => {
+  if (!webTorrentConstructorPromise) {
+    webTorrentConstructorPromise = import('webtorrent').then((module) => module.default)
+  }
+
+  return webTorrentConstructorPromise
+}
+
+const resolveTorrentUploadPolicy = (
+  uploadMode: TorrentUploadMode
+): {
+  uploadLimit: number
+  seedOutgoingConnections: boolean
+  uploads: number | false
+  destroyStoreOnDestroy: boolean
+  keepClientAfterCompletion: boolean
+} => {
+  if (uploadMode === 'never') {
+    return {
+      uploadLimit: 0,
+      seedOutgoingConnections: false,
+      uploads: false,
+      destroyStoreOnDestroy: true,
+      keepClientAfterCompletion: false
+    }
+  }
+
+  if (uploadMode === 'always') {
+    return {
+      uploadLimit: -1,
+      seedOutgoingConnections: true,
+      uploads: 10,
+      destroyStoreOnDestroy: false,
+      keepClientAfterCompletion: true
+    }
+  }
+
+  return {
+    uploadLimit: -1,
+    seedOutgoingConnections: true,
+    uploads: 10,
+    destroyStoreOnDestroy: true,
+    keepClientAfterCompletion: false
+  }
+}
+
+const createTorrentClient = async (
+  uploadMode: TorrentUploadMode,
+  options?: { forceNoOutgoing?: boolean }
+): Promise<TorrentClientInstance> => {
+  const WebTorrent = await loadWebTorrentConstructor()
+  const policy = resolveTorrentUploadPolicy(uploadMode)
+
+  return new WebTorrent({
+    dht: true,
+    tracker: true,
+    seedOutgoingConnections: options?.forceNoOutgoing ? false : policy.seedOutgoingConnections,
+    uploadLimit: policy.uploadLimit
+  })
+}
+
+const addTorrentToClient = async (
+  client: TorrentClientInstance,
+  source: TorrentSource,
+  uploadMode: TorrentUploadMode,
+  timeoutMs: number = TORRENT_METADATA_TIMEOUT_MS
+): Promise<TorrentInstance> => {
+  if (source.sourceType === 'file' && !existsSync(source.source)) {
+    throw new Error(`Torrent file not found: ${source.source}`)
+  }
+
+  const policy = resolveTorrentUploadPolicy(uploadMode)
+
+  console.log('[TORRENT] addTorrentToClient start', {
+    sourceId: source.id,
+    sourceType: source.sourceType,
+    label: source.label,
+    source: source.source,
+    uploadMode
+  })
+
+  return await new Promise((resolve, reject) => {
+    let settled = false
+    let timeoutId: NodeJS.Timeout | null = null
+    let statusIntervalId: ReturnType<typeof globalThis.setInterval> | null = null
+    let metadataPollId: ReturnType<typeof globalThis.setInterval> | null = null
+    let currentTorrent: TorrentInstance | null = null
+
+    const finish = (callback: () => void): void => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+
+      if (statusIntervalId) {
+        clearInterval(statusIntervalId)
+        statusIntervalId = null
+      }
+
+      if (metadataPollId) {
+        clearInterval(metadataPollId)
+        metadataPollId = null
+      }
+
+      callback()
+    }
+
+    statusIntervalId = globalThis.setInterval(() => {
+      const torrent = currentTorrent as {
+        name?: string
+        progress?: number
+        downloaded?: number
+        length?: number
+        numPeers?: number
+        files?: Array<{ path?: string; name?: string; length?: number }>
+      } | null
+
+      console.log('[TORRENT] metadata heartbeat', {
+        sourceId: source.id,
+        label: source.label,
+        torrentName: torrent?.name ?? null,
+        numPeers: torrent?.numPeers ?? null,
+        fileCount: torrent?.files?.length ?? null,
+        hasLength: torrent?.length != null
+      })
+    }, 5000)
+
+    const onClientError = (error: unknown) => {
+      if (settled) {
+        return
+      }
+
+      console.error('[TORRENT] metadata client error', {
+        sourceId: source.id,
+        label: source.label,
+        error: getErrorMessage(error)
+      })
+      settled = true
+      finish(() => {
+        client.off('error', onClientError)
+        reject(error)
+      })
+    }
+
+    client.once('error', onClientError)
+
+    timeoutId = setTimeout(() => {
+      if (settled) {
+        return
+      }
+
+      console.error('[TORRENT] metadata timeout', {
+        sourceId: source.id,
+        label: source.label,
+        timeoutMs
+      })
+      settled = true
+      finish(() => {
+        client.off('error', onClientError)
+        const msg =
+          source.sourceType === 'magnet'
+            ? `Timed out reading torrent metadata for ${source.label}. The info dictionary may be very large — try adding a .torrent file instead of a magnet link.`
+            : `Timed out reading torrent metadata for ${source.label}.`
+        reject(new Error(msg))
+      })
+    }, timeoutMs)
+
+    try {
+      const torrentRef = client.add(
+        source.source,
+        {
+          destroyStoreOnDestroy: policy.destroyStoreOnDestroy,
+          uploads: policy.uploads
+        },
+        (torrent) => {
+          // 'ready' callback — fallback if metadata event was missed
+          if (settled) {
+            return
+          }
+
+          currentTorrent = torrent
+          console.log('[TORRENT] resolved via ready callback', {
+            sourceId: source.id,
+            label: source.label,
+            torrentName: torrent.name ?? null,
+            fileCount: torrent.files?.length ?? 0
+          })
+          settled = true
+          finish(() => {
+            client.off('error', onClientError)
+            resolve(torrent)
+          })
+        }
+      )
+
+      // Set currentTorrent immediately so heartbeat shows live peer count before metadata arrives
+      currentTorrent = torrentRef
+
+      // Log peer extended handshake after delay — extendedHandshake is empty at wire-connect time
+      let wireLogCount = 0
+      torrentRef.on('wire', (...args: unknown[]) => {
+        wireLogCount++
+        const wireIndex = wireLogCount
+        if (wireIndex > 5) return
+        const wire = args[0] as {
+          peerExtendedHandshake?: { m?: Record<string, number>; [key: string]: unknown }
+          remoteAddress?: string
+        } | null
+        const addr = wire?.remoteAddress ?? 'unknown'
+        setTimeout(() => {
+          const m = wire?.peerExtendedHandshake?.m
+          console.log('[TORRENT] wire peer handshake', {
+            sourceId: source.id,
+            wire: wireIndex,
+            remoteAddress: addr,
+            peerExtensions: m ? Object.keys(m) : null,
+            hasUtMetadata: Boolean(m?.ut_metadata)
+          })
+        }, 3000)
+      })
+
+      // Poll every 500ms for name being set — WebTorrent v2 'metadata' event is unreliable
+      metadataPollId = globalThis.setInterval(() => {
+        const t = torrentRef as { name?: string; files?: TorrentFileHandle[] }
+        if (!settled && t.name && t.files && t.files.length > 0) {
+          console.log('[TORRENT] metadata resolved via poll', {
+            sourceId: source.id,
+            label: source.label,
+            torrentName: t.name,
+            fileCount: t.files.length,
+            files: t.files.map((file) => ({
+              path: file.path ?? null,
+              name: file.name ?? null,
+              length: file.length ?? null
+            }))
+          })
+          settled = true
+          finish(() => {
+            client.off('error', onClientError)
+            resolve(torrentRef)
+          })
+        }
+      }, 500)
+
+      // Resolve as soon as metadata is available — fires before 'ready'/storage setup
+      torrentRef.on('metadata', () => {
+        if (settled) {
+          return
+        }
+
+        console.log('[TORRENT] metadata resolved via metadata event', {
+          sourceId: source.id,
+          label: source.label,
+          torrentName: (torrentRef as { name?: string }).name ?? null,
+          fileCount: (torrentRef as { files?: unknown[] }).files?.length ?? 0,
+          files: ((torrentRef as { files?: TorrentFileHandle[] }).files ?? []).map((file) => ({
+            path: file.path ?? null,
+            name: file.name ?? null,
+            length: file.length ?? null
+          }))
+        })
+        settled = true
+        finish(() => {
+          client.off('error', onClientError)
+          resolve(torrentRef)
+        })
+      })
+
+      torrentRef.on('warning', (...args: unknown[]) => {
+        console.warn('[TORRENT] torrent warning', {
+          sourceId: source.id,
+          label: source.label,
+          warn: String(args[0])
+        })
+      })
+
+      torrentRef.on('noPeers', (...args: unknown[]) => {
+        console.warn('[TORRENT] no peers found', {
+          sourceId: source.id,
+          label: source.label,
+          announceType: String(args[0])
+        })
+      })
+
+      torrentRef.on('error', (...args: unknown[]) => {
+        console.error('[TORRENT] torrent-level error', {
+          sourceId: source.id,
+          label: source.label,
+          err: String(args[0])
+        })
+      })
+    } catch (error) {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      finish(() => {
+        client.off('error', onClientError)
+        reject(error)
+      })
+    }
+  })
+}
+
+const destroyTorrentClient = async (client: TorrentClientInstance | null): Promise<void> => {
+  if (!client) {
+    return
+  }
+
+  await new Promise<void>((resolve) => {
+    try {
+      client.destroy(() => resolve())
+    } catch {
+      resolve()
+    }
+  })
+}
+
+const emitTorrentDownloadSnapshot = (): void => {
+  currentTorrentDownloadSnapshot = {
+    active: currentTorrentDownloadSnapshot.items.some((item) =>
+      ['queued', 'downloading', 'extracting'].includes(item.status)
+    ),
+    items: currentTorrentDownloadSnapshot.items
+  }
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('torrents:progress', currentTorrentDownloadSnapshot)
+  }
+}
+
+const setTorrentDownloadItems = (items: TorrentDownloadItem[]): void => {
+  currentTorrentDownloadSnapshot = {
+    active: items.some((item) => ['queued', 'downloading', 'extracting'].includes(item.status)),
+    items
+  }
+
+  emitTorrentDownloadSnapshot()
+}
+
+const updateTorrentDownloadItem = (
+  itemId: string,
+  updater: (item: TorrentDownloadItem) => TorrentDownloadItem
+): void => {
+  const itemIndex = currentTorrentDownloadSnapshot.items.findIndex((item) => item.id === itemId)
+
+  if (itemIndex === -1) {
+    return
+  }
+
+  const nextItems = [...currentTorrentDownloadSnapshot.items]
+  nextItems[itemIndex] = updater(nextItems[itemIndex])
+  setTorrentDownloadItems(nextItems)
+}
+
+const getTorrentBrowserCachePath = (): string => {
+  return join(app.getPath('userData'), TORRENT_BROWSER_CACHE_FILE_NAME)
+}
+
+const readTorrentBrowserCache = async (): Promise<TorrentBrowserSnapshot | null> => {
+  try {
+    const fileContents = await readFile(getTorrentBrowserCachePath(), 'utf8')
+    const parsed = JSON.parse(fileContents) as Partial<TorrentBrowserSnapshot>
+    return {
+      files: parsed.files ?? [],
+      resolvedNames: parsed.resolvedNames ?? {},
+      sourceErrors: parsed.sourceErrors ?? []
+    }
+  } catch {
+    return null
+  }
+}
+
+const saveTorrentBrowserCache = async (snapshot: TorrentBrowserSnapshot): Promise<void> => {
+  try {
+    await mkdir(app.getPath('userData'), { recursive: true })
+    await writeFile(getTorrentBrowserCachePath(), JSON.stringify(snapshot, null, 2), 'utf8')
+  } catch {
+    // Non-fatal — cache is a performance optimisation only.
+  }
+}
+
+const getTorrentPlatforms = (): TorrentPlatformSummary[] => {
+  const platforms = new Map<string, TorrentPlatformSummary>()
+
+  for (const file of currentTorrentBrowserSnapshot.files) {
+    const key = file.matchedPlatformSourceName
+    const existing = platforms.get(key)
+
+    if (existing) {
+      existing.fileCount += 1
+
+      if (!existing.releaseGroups.includes(file.releaseGroupName)) {
+        existing.releaseGroups.push(file.releaseGroupName)
+      }
+    } else {
+      platforms.set(key, {
+        id: key,
+        displayName: file.matchedPlatformName,
+        sourceName: file.matchedPlatformSourceName,
+        fileCount: 1,
+        releaseGroups: [file.releaseGroupName]
+      })
+    }
+  }
+
+  return [...platforms.values()].sort((left, right) =>
+    left.displayName.localeCompare(right.displayName)
+  )
+}
+
+const getTorrentGames = async (
+  config: AppConfig,
+  platformSourceName: string
+): Promise<TorrentGameGroup[]> => {
+  const filesForPlatform = currentTorrentBrowserSnapshot.files.filter(
+    (file) => file.matchedPlatformSourceName === platformSourceName
+  )
+
+  const groups = new Map<string, TorrentGameGroup>()
+  const metadataCache = await readMetadataCache()
+  const hasTwitchConfig = Boolean(config.twitchClientId && config.twitchClientSecret)
+
+  for (const file of filesForPlatform) {
+    const normalizedKey = normalizePlatformKey(stripRomDecorators(file.romName) || file.romName)
+    const existing = groups.get(normalizedKey)
+
+    if (existing) {
+      if (!existing.files.some((f) => f.entryId === file.id)) {
+        existing.files.push({
+          entryId: file.id,
+          releaseGroupName: file.releaseGroupName,
+          torrentLabel: file.torrentLabel,
+          fileName: file.fileName,
+          size: file.size
+        })
+      }
+    } else {
+      const cacheKey = buildCacheKey(platformSourceName, file.fileName)
+      const cachedMetadata = metadataCache.entries[cacheKey]
+
+      groups.set(normalizedKey, {
+        id: `${platformSourceName}::${normalizedKey}`,
+        displayName:
+          cachedMetadata?.displayName ??
+          titleCasePlatformName(stripRomDecorators(file.romName) || file.romName),
+        cleanedName:
+          cachedMetadata?.cleanedName ?? (stripRomDecorators(file.romName) || file.romName),
+        coverUrl: cachedMetadata?.coverUrl ?? null,
+        metadataStatus: cachedMetadata?.status ?? (hasTwitchConfig ? 'missing' : 'pending'),
+        platformDisplayName: file.matchedPlatformName,
+        platformSourceName: file.matchedPlatformSourceName,
+        files: [
+          {
+            entryId: file.id,
+            releaseGroupName: file.releaseGroupName,
+            torrentLabel: file.torrentLabel,
+            fileName: file.fileName,
+            size: file.size
+          }
+        ]
+      })
+    }
+  }
+
+  return [...groups.values()].sort((left, right) =>
+    left.displayName.localeCompare(right.displayName)
+  )
+}
+
+const refreshTorrentBrowserState = async (config: AppConfig): Promise<TorrentBrowserSnapshot> => {
+  if (torrentBrowserRefreshPromise) {
+    console.log('[TORRENT] refreshTorrentBrowserState joined in-flight refresh')
+    return torrentBrowserRefreshPromise
+  }
+
+  torrentBrowserRefreshPromise = (async () => {
+    const files: TorrentFileEntry[] = []
+    const sourceErrors: TorrentBrowserSnapshot['sourceErrors'] = []
+    const resolvedNames: Record<string, string> = {}
+
+    console.log('[TORRENT] refreshTorrentBrowserState start', {
+      sourceCount: config.torrentSources.length
+    })
+
+    torrentFileLookup.clear()
+
+    for (const source of config.torrentSources) {
+      let client: TorrentClientInstance | null = null
+
+      try {
+        console.log('[TORRENT] refreshing source', {
+          sourceId: source.id,
+          label: source.label,
+          sourceType: source.sourceType,
+          source: source.source
+        })
+        client = await createTorrentClient(config.torrentUploadMode)
+        const torrentClient = client
+        const torrent = await addTorrentToClient(
+          torrentClient,
+          source,
+          'when_downloading',
+          TORRENT_BROWSER_METADATA_TIMEOUT_MS
+        )
+
+        if (torrent.name) {
+          resolvedNames[source.id] = torrent.name
+        }
+
+        console.log('[TORRENT] source metadata ready', {
+          sourceId: source.id,
+          label: source.label,
+          source: source.source,
+          torrentName: torrent.name ?? null,
+          matchedFiles: torrent.files?.length ?? 0
+        })
+
+        for (const torrentFile of torrent.files ?? []) {
+          const entry = extractTorrentFileEntry(source, torrentFile)
+
+          if (!entry) {
+            console.log('[TORRENT] skipping unmatched torrent file', {
+              sourceId: source.id,
+              torrentPath: String(torrentFile.path ?? torrentFile.name ?? ''),
+              torrentName: torrent.name ?? null
+            })
+            continue
+          }
+
+          files.push(entry)
+          console.log('[TORRENT] matched torrent file', {
+            sourceId: source.id,
+            entryId: entry.id,
+            platform: entry.matchedPlatformName,
+            releaseGroup: entry.releaseGroupName,
+            fileName: entry.fileName
+          })
+          torrentFileLookup.set(entry.id, {
+            source,
+            relativePath: entry.relativePath,
+            fileName: entry.fileName,
+            size: entry.size,
+            platformName: entry.platformName,
+            matchedPlatformName: entry.matchedPlatformName,
+            matchedPlatformSourceName: entry.matchedPlatformSourceName
+          })
+        }
+      } catch (error) {
+        console.error('[TORRENT] source refresh failed', {
+          sourceId: source.id,
+          label: source.label,
+          error: getErrorMessage(error)
+        })
+        sourceErrors.push({
+          torrentId: source.id,
+          message: getErrorMessage(error)
+        })
+      } finally {
+        await destroyTorrentClient(client)
+      }
+    }
+
+    currentTorrentBrowserSnapshot = {
+      files: files.sort((left, right) => {
+        const byPlatform = left.matchedPlatformName.localeCompare(right.matchedPlatformName)
+
+        if (byPlatform !== 0) {
+          return byPlatform
+        }
+
+        const byName = left.romName.localeCompare(right.romName)
+
+        if (byName !== 0) {
+          return byName
+        }
+
+        return left.fileName.localeCompare(right.fileName)
+      }),
+      resolvedNames,
+      sourceErrors
+    }
+
+    void saveTorrentBrowserCache(currentTorrentBrowserSnapshot)
+
+    console.log('[TORRENT] refreshTorrentBrowserState done', {
+      fileCount: currentTorrentBrowserSnapshot.files.length,
+      sourceErrorCount: currentTorrentBrowserSnapshot.sourceErrors.length,
+      resolvedNameCount: Object.keys(currentTorrentBrowserSnapshot.resolvedNames).length
+    })
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('torrents:browser-state', currentTorrentBrowserSnapshot)
+    }
+
+    return currentTorrentBrowserSnapshot
+  })().finally(() => {
+    torrentBrowserRefreshPromise = null
+  })
+
+  return torrentBrowserRefreshPromise
+}
+
+const resolveTorrentFileDescriptor = async (
+  config: AppConfig,
+  torrentFileId: string
+): Promise<{
+  source: TorrentSource
+  relativePath: string
+  fileName: string
+  size: number
+  platformName: string
+  matchedPlatformName: string
+  matchedPlatformSourceName: string
+}> => {
+  const cachedDescriptor = torrentFileLookup.get(torrentFileId)
+
+  if (cachedDescriptor) {
+    return cachedDescriptor
+  }
+
+  await refreshTorrentBrowserState(config)
+
+  const refreshedDescriptor = torrentFileLookup.get(torrentFileId)
+
+  if (!refreshedDescriptor) {
+    throw new Error('The selected torrent file could not be resolved. Refresh the torrent screen.')
+  }
+
+  return refreshedDescriptor
+}
+
+const runTorrentFileDownload = async (
+  config: AppConfig,
+  downloadItem: TorrentDownloadItem,
+  descriptor: {
+    source: TorrentSource
+    relativePath: string
+    fileName: string
+    size: number
+    platformName: string
+    matchedPlatformName: string
+    matchedPlatformSourceName: string
+  }
+): Promise<void> => {
+  let client: TorrentClientInstance | null = null
+  let progressInterval: NodeJS.Timeout | null = null
+  const partialTargetPath = `${downloadItem.targetPath}.games2-part`
+  let archiveAvailable = false
+  let keepClientAliveForSeeding = false
+  const uploadMode = sanitizeTorrentUploadMode(config.torrentUploadMode)
+
+  try {
+    const existingTargetStats = await stat(downloadItem.targetPath).catch(() => null)
+
+    if (
+      existingTargetStats &&
+      existingTargetStats.isFile() &&
+      existingTargetStats.size === descriptor.size
+    ) {
+      archiveAvailable = true
+      updateTorrentDownloadItem(downloadItem.id, (item) => ({
+        ...item,
+        status: 'extracting',
+        error: null
+      }))
+
+      await extractArchiveIfNeeded(downloadItem.targetPath)
+
+      updateTorrentDownloadItem(downloadItem.id, (item) => ({
+        ...item,
+        status: 'completed',
+        error: null,
+        bytesTransferred: descriptor.size,
+        progress: 100
+      }))
+      return
+    }
+
+    client = await createTorrentClient(uploadMode)
+    const torrentClient = client
+
+    const existingTorrentClient = activeTorrentClients.get(downloadItem.id)
+
+    if (existingTorrentClient && existingTorrentClient !== torrentClient) {
+      await destroyTorrentClient(existingTorrentClient)
+    }
+
+    activeTorrentClients.set(downloadItem.id, torrentClient)
+    updateTorrentDownloadItem(downloadItem.id, (item) => ({
+      ...item,
+      status: 'downloading',
+      error: null
+    }))
+
+    const torrent = await addTorrentToClient(torrentClient, descriptor.source, uploadMode)
+
+    const targetFile = (torrent.files ?? []).find(
+      (file) =>
+        normalizeTorrentPath(String(file.path ?? file.name ?? '')) === descriptor.relativePath
+    )
+
+    if (!targetFile || typeof targetFile.createReadStream !== 'function') {
+      throw new Error('The selected file was not found in the torrent metadata.')
+    }
+
+    for (const file of torrent.files ?? []) {
+      file.deselect?.()
+    }
+
+    targetFile.select?.()
+
+    await mkdir(dirname(downloadItem.targetPath), { recursive: true })
+
+    if (existsSync(partialTargetPath)) {
+      await unlink(partialTargetPath).catch(() => undefined)
+    }
+
+    progressInterval = setInterval(() => {
+      const bytesTransferred = Math.min(
+        descriptor.size,
+        Math.max(0, Number(targetFile.downloaded ?? torrent.downloaded ?? 0))
+      )
+
+      updateTorrentDownloadItem(downloadItem.id, (item) => ({
+        ...item,
+        bytesTransferred,
+        progress:
+          descriptor.size > 0
+            ? Math.min(99, Math.round((bytesTransferred / descriptor.size) * 100))
+            : 0
+      }))
+    }, 350)
+
+    await new Promise<void>((resolve, reject) => {
+      const readStream = targetFile.createReadStream?.()
+
+      if (!readStream) {
+        reject(new Error('Unable to create a torrent file stream.'))
+        return
+      }
+
+      const writeStream = createWriteStream(partialTargetPath)
+
+      const onError = (error: unknown) => {
+        readStream.destroy()
+        writeStream.destroy()
+        reject(error)
+      }
+
+      readStream.once('error', onError)
+      writeStream.once('error', onError)
+      writeStream.once('finish', () => resolve())
+      readStream.pipe(writeStream)
+    })
+
+    if (existsSync(downloadItem.targetPath)) {
+      await unlink(downloadItem.targetPath).catch((error: unknown) => {
+        throw new Error(
+          `Could not replace existing file at ${downloadItem.targetPath}: ${getErrorMessage(error)}`
+        )
+      })
+    }
+
+    await rename(partialTargetPath, downloadItem.targetPath).catch((error: unknown) => {
+      throw new Error(
+        `Could not finalize torrent download at ${downloadItem.targetPath}: ${getErrorMessage(error)}`
+      )
+    })
+
+    archiveAvailable = true
+    await extractArchiveIfNeeded(downloadItem.targetPath)
+
+    keepClientAliveForSeeding = resolveTorrentUploadPolicy(uploadMode).keepClientAfterCompletion
+
+    updateTorrentDownloadItem(downloadItem.id, (item) => ({
+      ...item,
+      status: 'completed',
+      error: null,
+      bytesTransferred: descriptor.size,
+      progress: 100
+    }))
+  } catch (error) {
+    try {
+      if (existsSync(partialTargetPath)) {
+        await unlink(partialTargetPath)
+      }
+
+      if (!archiveAvailable && existsSync(downloadItem.targetPath)) {
+        await unlink(downloadItem.targetPath)
+      }
+    } catch {
+      // Ignore best-effort cleanup failures for partial torrent files.
+    }
+
+    updateTorrentDownloadItem(downloadItem.id, (item) => ({
+      ...item,
+      status: 'error',
+      error: getErrorMessage(error),
+      bytesTransferred: 0,
+      progress: 0
+    }))
+  } finally {
+    if (progressInterval) {
+      clearInterval(progressInterval)
+    }
+
+    if (!keepClientAliveForSeeding) {
+      activeTorrentClients.delete(downloadItem.id)
+      await destroyTorrentClient(client)
+    }
+  }
+}
+
+const queueTorrentFileDownload = async (
+  config: AppConfig,
+  torrentFileId: string
+): Promise<TorrentDownloadSnapshot> => {
+  if (!config.romsDirectory.trim()) {
+    throw new Error('Local game path is required before downloading torrents.')
+  }
+
+  const descriptor = await resolveTorrentFileDescriptor(config, torrentFileId)
+  const targetPath = join(
+    config.romsDirectory,
+    descriptor.matchedPlatformSourceName,
+    descriptor.fileName
+  )
+  const nextItem: TorrentDownloadItem = {
+    id: torrentFileId,
+    torrentFileId,
+    torrentId: descriptor.source.id,
+    torrentLabel: descriptor.source.label,
+    fileName: descriptor.fileName,
+    platformName: descriptor.matchedPlatformName,
+    bytesTransferred: 0,
+    totalBytes: descriptor.size,
+    progress: 0,
+    status: 'queued',
+    error: null,
+    targetPath
+  }
+
+  const existingIndex = currentTorrentDownloadSnapshot.items.findIndex(
+    (item) => item.id === nextItem.id
+  )
+  const nextItems = [...currentTorrentDownloadSnapshot.items]
+
+  if (existingIndex >= 0) {
+    nextItems[existingIndex] = nextItem
+  } else {
+    nextItems.unshift(nextItem)
+  }
+
+  setTorrentDownloadItems(nextItems)
+  void runTorrentFileDownload(config, nextItem, descriptor)
+
+  return currentTorrentDownloadSnapshot
+}
+
 const getConfigPath = (): string => {
   return join(app.getPath('userData'), CONFIG_FILE_NAME)
 }
@@ -599,6 +1864,7 @@ const sanitizeConfig = (config: Partial<AppConfig>): AppConfig => {
       : 'ftp'
   const rawInputKeyboardMode = String(config.inputKeyboardMode || 'gamepad').toLowerCase()
   const inputKeyboardMode = rawInputKeyboardMode === 'always' ? 'always' : 'gamepad'
+  const torrentUploadMode = sanitizeTorrentUploadMode(config.torrentUploadMode)
 
   return {
     romsDirectory: config.romsDirectory?.trim() ?? '',
@@ -610,7 +1876,9 @@ const sanitizeConfig = (config: Partial<AppConfig>): AppConfig => {
     ftpUsername: config.ftpUsername?.trim() ?? '',
     ftpPassword: config.ftpPassword ?? '',
     rommApiToken: config.rommApiToken?.trim() ?? '',
-    inputKeyboardMode
+    inputKeyboardMode,
+    torrentUploadMode,
+    torrentSources: sanitizeTorrentSources(config.torrentSources)
   }
 }
 
@@ -1970,10 +3238,29 @@ ipcMain.handle('app:reset-app-data', async () => {
   )
 
   currentDownloadSnapshot = emptySnapshot()
+  currentTorrentBrowserSnapshot = { files: [], resolvedNames: {}, sourceErrors: [] }
+  currentTorrentDownloadSnapshot = { active: false, items: [] }
   activeDownloadClient = null
   activeDownloadingGameId = null
   cancelledGameIds.clear()
+  await Promise.all(
+    [...activeTorrentClients.values()].map(async (client) => {
+      await destroyTorrentClient(client)
+    })
+  )
+  activeTorrentClients.clear()
+  torrentFileLookup.clear()
   igdbTokenCache = null
+
+  try {
+    const cachePath = getTorrentBrowserCachePath()
+
+    if (existsSync(cachePath)) {
+      await unlink(cachePath)
+    }
+  } catch {
+    // Non-fatal cache cleanup failure.
+  }
 
   return true
 })
@@ -2052,6 +3339,19 @@ ipcMain.handle('app:pick-directory', async () => {
   }
 })
 
+ipcMain.handle('app:pick-torrent-file', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Torrent Files', extensions: ['torrent'] }]
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
+})
+
 ipcMain.handle('app:pick-config-file', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -2091,6 +3391,7 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
         ftpUsername: parsed.FTP_USERNAME || '',
         ftpPassword: parsed.FTP_PASSWORD || '',
         rommApiToken: parsed.ROMM_API_TOKEN || '',
+        torrentUploadMode: (parsed.TORRENT_UPLOAD_MODE || '').toLowerCase() || undefined,
         inputKeyboardMode:
           (parsed.INPUT_KEYBOARD_MODE || parsed.SHOW_KEYBOARD_FOR_INPUTS || '')
             .toLowerCase()
@@ -2114,6 +3415,7 @@ ipcMain.handle('app:load-config-from-file', async (_event, filePath: string) => 
         ftpUsername: parsed.ftpUsername || '',
         ftpPassword: parsed.ftpPassword || '',
         rommApiToken: parsed.rommApiToken || '',
+        torrentUploadMode: (parsed.torrentUploadMode || '').toLowerCase() || undefined,
         inputKeyboardMode:
           (parsed.inputKeyboardMode || parsed.showKeyboardForInputs || '').toLowerCase().trim() ||
           undefined,
@@ -2245,6 +3547,70 @@ ipcMain.handle('downloads:clear-history', async () => clearDownloadQueueHistory(
 
 ipcMain.handle('downloads:get-state', async () => currentDownloadSnapshot)
 
+ipcMain.handle('torrents:get-browser-state', async () => {
+  const config = await readConfigFromDisk()
+
+  console.log('[TORRENT] get-browser-state', {
+    cachedFiles: currentTorrentBrowserSnapshot.files.length,
+    sourceCount: config.torrentSources.length
+  })
+
+  if (currentTorrentBrowserSnapshot.files.length === 0) {
+    const cached = await readTorrentBrowserCache()
+
+    if (cached) {
+      console.log('[TORRENT] using cached torrent browser snapshot', {
+        fileCount: cached.files.length,
+        resolvedNameCount: Object.keys(cached.resolvedNames).length,
+        sourceErrorCount: cached.sourceErrors.length
+      })
+      currentTorrentBrowserSnapshot = cached
+
+      for (const file of cached.files) {
+        torrentFileLookup.set(file.id, {
+          source: config.torrentSources.find((s) => s.id === file.torrentId) ?? {
+            id: file.torrentId,
+            label: file.torrentLabel,
+            sourceType: 'magnet',
+            source: ''
+          },
+          relativePath: file.relativePath,
+          fileName: file.fileName,
+          size: file.size,
+          platformName: file.platformName,
+          matchedPlatformName: file.matchedPlatformName,
+          matchedPlatformSourceName: file.matchedPlatformSourceName
+        })
+      }
+
+      void refreshTorrentBrowserState(config)
+      return currentTorrentBrowserSnapshot
+    }
+  }
+
+  console.log('[TORRENT] refreshing browser state from sources')
+  return refreshTorrentBrowserState(config)
+})
+
+ipcMain.handle('torrents:get-download-state', async () => currentTorrentDownloadSnapshot)
+
+ipcMain.handle('torrents:download-file', async (_event, torrentFileId: string) => {
+  const config = await readConfigFromDisk()
+  return queueTorrentFileDownload(config, torrentFileId)
+})
+
+ipcMain.handle('torrents:refresh-browser-state', async () => {
+  const config = await readConfigFromDisk()
+  return refreshTorrentBrowserState(config)
+})
+
+ipcMain.handle('torrents:list-platforms', async () => getTorrentPlatforms())
+
+ipcMain.handle('torrents:list-games', async (_event, platformSourceName: string) => {
+  const config = await readConfigFromDisk()
+  return getTorrentGames(config, platformSourceName)
+})
+
 const resolveWindowIconPath = (): string => {
   const developmentIconPath = join(__dirname, '../../resources/icon.png')
 
@@ -2259,7 +3625,8 @@ const createWindow = (): void => {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
-    fullscreen: true,
+    fullscreen: false,
+    fullscreenable: true,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#121a20',

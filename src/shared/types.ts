@@ -1,5 +1,94 @@
 export type FileServiceType = 'ftp' | 'ftps' | 'sftp' | 'nextcloud' | 'romm'
 export type InputKeyboardMode = 'always' | 'gamepad'
+export type TorrentUploadMode = 'always' | 'when_downloading' | 'never'
+export type TorrentSourceType = 'magnet' | 'file'
+export type TorrentMatchConfidence = 'exact' | 'fuzzy' | 'fallback'
+export type TorrentDownloadStatus =
+  | 'queued'
+  | 'downloading'
+  | 'extracting'
+  | 'completed'
+  | 'error'
+  | 'cancelled'
+
+export interface TorrentSource {
+  id: string
+  label: string
+  sourceType: TorrentSourceType
+  source: string
+  resolvedName?: string
+}
+
+export interface TorrentFileEntry {
+  id: string
+  torrentId: string
+  torrentLabel: string
+  releaseGroupName: string
+  platformName: string
+  matchedPlatformName: string
+  matchedPlatformSourceName: string
+  matchConfidence: TorrentMatchConfidence
+  romName: string
+  fileName: string
+  relativePath: string
+  size: number
+}
+
+export interface TorrentBrowserSnapshot {
+  files: TorrentFileEntry[]
+  resolvedNames: Record<string, string>
+  sourceErrors: Array<{
+    torrentId: string
+    message: string
+  }>
+}
+
+export interface TorrentPlatformSummary {
+  id: string
+  displayName: string
+  sourceName: string
+  fileCount: number
+  releaseGroups: string[]
+}
+
+export interface TorrentGameFile {
+  entryId: string
+  releaseGroupName: string
+  torrentLabel: string
+  fileName: string
+  size: number
+}
+
+export interface TorrentGameGroup {
+  id: string
+  displayName: string
+  cleanedName: string
+  coverUrl: string | null
+  metadataStatus: 'found' | 'missing' | 'error' | 'pending'
+  platformDisplayName: string
+  platformSourceName: string
+  files: TorrentGameFile[]
+}
+
+export interface TorrentDownloadItem {
+  id: string
+  torrentFileId: string
+  torrentId: string
+  torrentLabel: string
+  fileName: string
+  platformName: string
+  bytesTransferred: number
+  totalBytes: number
+  progress: number
+  status: TorrentDownloadStatus
+  error: string | null
+  targetPath: string
+}
+
+export interface TorrentDownloadSnapshot {
+  active: boolean
+  items: TorrentDownloadItem[]
+}
 
 export interface AppConfig {
   romsDirectory: string
@@ -12,6 +101,8 @@ export interface AppConfig {
   ftpPassword: string
   rommApiToken: string
   inputKeyboardMode: InputKeyboardMode
+  torrentUploadMode: TorrentUploadMode
+  torrentSources: TorrentSource[]
 }
 
 export interface PlatformSummary {

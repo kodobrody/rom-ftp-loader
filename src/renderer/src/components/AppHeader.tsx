@@ -28,9 +28,11 @@ export const AppHeader = (): React.JSX.Element | null => {
       ? 'Search'
       : pathname === '/downloads'
         ? 'Downloads'
-        : selectedPlatform
-          ? selectedPlatform.name
-          : 'Platforms'
+        : pathname === '/torrents'
+          ? 'Torrent Test'
+          : selectedPlatform
+            ? selectedPlatform.name
+            : 'Platforms'
 
   const downloadedGames = games.filter((game) => game.downloaded).length
   const gamesWithCover = games.filter((game) => Boolean(game.coverUrl)).length

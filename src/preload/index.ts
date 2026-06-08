@@ -7,7 +7,11 @@ import type {
   GameMetadataUpdate,
   IgdbSearchResult,
   LibraryCacheSnapshot,
-  PlatformSummary
+  PlatformSummary,
+  TorrentBrowserSnapshot,
+  TorrentDownloadSnapshot,
+  TorrentGameGroup,
+  TorrentPlatformSummary
 } from '../shared/types'
 
 // Custom APIs for renderer
@@ -19,6 +23,7 @@ const api = {
   openOnScreenKeyboard: () =>
     ipcRenderer.invoke('system:open-onscreen-keyboard') as Promise<boolean>,
   pickDirectory: () => ipcRenderer.invoke('app:pick-directory') as Promise<string | null>,
+  pickTorrentFile: () => ipcRenderer.invoke('app:pick-torrent-file') as Promise<string | null>,
   pickConfigFile: () => ipcRenderer.invoke('app:pick-config-file') as Promise<string | null>,
   loadConfigFromFile: (filePath: string) =>
     ipcRenderer.invoke('app:load-config-from-file', filePath) as Promise<AppConfig>,
@@ -63,7 +68,30 @@ const api = {
   clearDownloadQueueHistory: () =>
     ipcRenderer.invoke('downloads:clear-history') as Promise<DownloadSnapshot>,
   getDownloadState: () => ipcRenderer.invoke('downloads:get-state') as Promise<DownloadSnapshot>,
+  getTorrentBrowserState: () =>
+    ipcRenderer.invoke('torrents:get-browser-state') as Promise<TorrentBrowserSnapshot>,
+  refreshTorrentBrowserState: () =>
+    ipcRenderer.invoke('torrents:refresh-browser-state') as Promise<TorrentBrowserSnapshot>,
+  listTorrentPlatforms: () =>
+    ipcRenderer.invoke('torrents:list-platforms') as Promise<TorrentPlatformSummary[]>,
+  listTorrentGames: (platformSourceName: string) =>
+    ipcRenderer.invoke('torrents:list-games', platformSourceName) as Promise<TorrentGameGroup[]>,
+  getTorrentDownloadState: () =>
+    ipcRenderer.invoke('torrents:get-download-state') as Promise<TorrentDownloadSnapshot>,
+  downloadTorrentFile: (torrentFileId: string) =>
+    ipcRenderer.invoke('torrents:download-file', torrentFileId) as Promise<TorrentDownloadSnapshot>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<void>,
+  onTorrentBrowserState: (listener: (snapshot: TorrentBrowserSnapshot) => void) => {
+    const subscription = (_event: Electron.IpcRendererEvent, snapshot: TorrentBrowserSnapshot) => {
+      listener(snapshot)
+    }
+
+    ipcRenderer.on('torrents:browser-state', subscription)
+
+    return () => {
+      ipcRenderer.off('torrents:browser-state', subscription)
+    }
+  },
   onDownloadProgress: (listener: (snapshot: DownloadSnapshot) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, snapshot: DownloadSnapshot) => {
       listener(snapshot)
@@ -73,6 +101,17 @@ const api = {
 
     return () => {
       ipcRenderer.off('downloads:progress', subscription)
+    }
+  },
+  onTorrentDownloadProgress: (listener: (snapshot: TorrentDownloadSnapshot) => void) => {
+    const subscription = (_event: Electron.IpcRendererEvent, snapshot: TorrentDownloadSnapshot) => {
+      listener(snapshot)
+    }
+
+    ipcRenderer.on('torrents:progress', subscription)
+
+    return () => {
+      ipcRenderer.off('torrents:progress', subscription)
     }
   },
   getVersions: () => process.versions

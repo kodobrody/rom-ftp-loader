@@ -69,73 +69,73 @@ export const PLATFORM_DEFINITIONS: PlatformDefinition[] = [
   },
   {
     displayName: 'PSP',
-    aliases: ['psp', 'playstationportable'],
+    aliases: ['psp', 'playstationportable', 'sonyplaystationportable'],
     extensions: ['cso', 'iso', 'pbp'],
     igdbPlatformIds: [38]
   },
   {
     displayName: 'PS Vita',
-    aliases: ['psvita', 'vita', 'playstationvita'],
+    aliases: ['psvita', 'vita', 'playstationvita', 'sonyplaystationvita'],
     extensions: ['vpk'],
     igdbPlatformIds: [46]
   },
   {
     displayName: 'Nintendo Entertainment System',
-    aliases: ['nes', 'nintendoentertainmentsystem'],
+    aliases: ['nes', 'nintendoentertainmentsystem', 'nintendonintendoentertainmentsystem'],
     extensions: ['fds', 'nes', 'zip'],
     igdbPlatformIds: [18]
   },
   {
     displayName: 'Super Nintendo',
-    aliases: ['snes', 'supernintendo', 'superfamicom'],
+    aliases: ['snes', 'supernintendo', 'superfamicom', 'nintendonintendosuperentertainmentsystem'],
     extensions: ['fig', 'sfc', 'smc', 'zip'],
     igdbPlatformIds: [19]
   },
   {
     displayName: 'Nintendo 64',
-    aliases: ['n64', 'nintendo64'],
+    aliases: ['n64', 'nintendo64', 'nintendonintendo64'],
     extensions: ['n64', 'v64', 'z64'],
     igdbPlatformIds: [4]
   },
   {
     displayName: 'Game Boy',
-    aliases: ['gb', 'gameboy'],
+    aliases: ['gb', 'gameboy', 'nintendogameboy'],
     extensions: ['gb', 'zip'],
     igdbPlatformIds: [33]
   },
   {
     displayName: 'Game Boy Color',
-    aliases: ['gbc', 'gameboycolor'],
+    aliases: ['gbc', 'gameboycolor', 'nintendogameboycolor'],
     extensions: ['gbc', 'zip'],
     igdbPlatformIds: [22]
   },
   {
     displayName: 'Game Boy Advance',
-    aliases: ['gba', 'gameboyadvance'],
+    aliases: ['gba', 'gameboyadvance', 'nintendogameboyadvance'],
     extensions: ['gba', 'zip'],
     igdbPlatformIds: [24]
   },
   {
     displayName: 'Nintendo DS',
-    aliases: ['ds', 'nds', 'nintendods'],
+    aliases: ['ds', 'nds', 'nintendods', 'nintendonintendods'],
     extensions: ['nds', 'zip'],
     igdbPlatformIds: [20]
   },
   {
     displayName: 'Nintendo 3DS',
-    aliases: ['3ds', 'n3ds', 'nintendo3ds'],
+    aliases: ['3ds', 'n3ds', 'nintendo3ds', 'nintendonintendo3ds'],
     extensions: ['3ds', 'cci', 'cxi'],
     igdbPlatformIds: [37]
   },
   {
     displayName: 'Nintendo GameCube',
-    aliases: ['gamecube', 'gc', 'ngc'],
+    aliases: ['gamecube', 'gc', 'ngc', 'nintendogamecube'],
     extensions: ['gcm', 'iso'],
     igdbPlatformIds: [21]
   },
   {
     displayName: 'Nintendo Wii',
-    aliases: ['wii'],
+    aliases: ['wii', 'nintendowii'],
     extensions: ['ciso', 'iso', 'wbfs'],
     igdbPlatformIds: [5]
   },
@@ -153,7 +153,7 @@ export const PLATFORM_DEFINITIONS: PlatformDefinition[] = [
   },
   {
     displayName: 'Sega Genesis',
-    aliases: ['genesis', 'megadrive', 'segagenesis', 'segamegadrive', 'md'],
+    aliases: ['genesis', 'megadrive', 'segagenesis', 'segamegadrive', 'md', 'segamegadrivegenesis'],
     extensions: ['bin', 'gen', 'md', 'smd', 'zip'],
     igdbPlatformIds: [29]
   },
@@ -165,7 +165,7 @@ export const PLATFORM_DEFINITIONS: PlatformDefinition[] = [
   },
   {
     displayName: 'Sega Saturn',
-    aliases: ['saturn', 'segasaturn'],
+    aliases: ['saturn', 'segasaturn', 'segasaturndisc'],
     extensions: ['bin', 'chd', 'cue', 'iso'],
     igdbPlatformIds: [32]
   },
@@ -180,6 +180,7 @@ export const PLATFORM_DEFINITIONS: PlatformDefinition[] = [
 export const CONFIG_FILE_NAME = 'launcher-config.json'
 export const METADATA_CACHE_FILE_NAME = 'igdb-rom-cache.json'
 export const LIBRARY_CACHE_FILE_NAME = 'library-cache.json'
+export const TORRENT_BROWSER_CACHE_FILE_NAME = 'torrent-browser-cache.json'
 export const IGDB_GAMES_URL = 'https://api.igdb.com/v4/games'
 export const TWITCH_TOKEN_URL = 'https://id.twitch.tv/oauth2/token'
 export const fetchFromMain = globalThis.fetch?.bind(globalThis)
@@ -194,7 +195,9 @@ export const emptyConfig = (): AppConfig => ({
   ftpUsername: '',
   ftpPassword: '',
   rommApiToken: '',
-  inputKeyboardMode: 'gamepad'
+  inputKeyboardMode: 'gamepad',
+  torrentUploadMode: 'when_downloading',
+  torrentSources: []
 })
 
 export const emptySnapshot = (): DownloadSnapshot => ({

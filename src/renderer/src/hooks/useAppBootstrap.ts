@@ -6,6 +6,7 @@ import { useLibraryStore } from '../store/libraryStore'
 import { useGameModalStore } from '../store/modals/gameModalStore'
 import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
 import { useSetupStore } from '../store/setupStore'
+import { useTorrentStore } from '../store/torrentStore'
 import { hasRequiredSetup } from '../utils/formatting'
 
 export const useAppBootstrap = (): void => {
@@ -20,13 +21,15 @@ export const useAppBootstrap = (): void => {
       const setup = useSetupStore.getState()
       const library = useLibraryStore.getState()
       const downloads = useDownloadsStore.getState()
+      const torrents = useTorrentStore.getState()
 
       appState.setBooting(true)
 
       try {
-        const [savedConfig, activeDownloads] = await Promise.all([
+        const [savedConfig, activeDownloads, activeTorrentDownloads] = await Promise.all([
           window.api.getConfig(),
-          window.api.getDownloadState()
+          window.api.getDownloadState(),
+          window.api.getTorrentDownloadState()
         ])
 
         if (ignore) {
@@ -37,6 +40,7 @@ export const useAppBootstrap = (): void => {
 
         setup.setConfig(savedConfig)
         downloads.setDownloadSnapshot(activeDownloads)
+        torrents.setDownloadSnapshot(activeTorrentDownloads)
         library.setDownloadSnapshot(activeDownloads)
         const cachedLibrary = await window.api.getLibraryCache()
 
@@ -96,6 +100,38 @@ export const useAppBootstrap = (): void => {
 
     return unsubscribe
   }, [selectedPlatformSourceName])
+
+  useEffect(() => {
+    const unsubscribe = window.api.onTorrentDownloadProgress((snapshot) => {
+      const torrents = useTorrentStore.getState()
+      const library = useLibraryStore.getState()
+
+      torrents.setDownloadSnapshot(snapshot)
+
+      if (!snapshot.active) {
+        void library.refreshPlatforms()
+
+        if (selectedPlatformSourceName) {
+          void library.refreshGames(selectedPlatformSourceName, { fetchMissingMetadata: false })
+        }
+      }
+    })
+
+    return unsubscribe
+  }, [selectedPlatformSourceName])
+
+  useEffect(() => {
+    const unsubscribe = window.api.onTorrentBrowserState((snapshot) => {
+      console.log('[TORRENT] browser-state event', {
+        files: snapshot.files.length,
+        resolvedNames: Object.keys(snapshot.resolvedNames).length,
+        sourceErrors: snapshot.sourceErrors.length
+      })
+      useTorrentStore.getState().setBrowserSnapshot(snapshot)
+    })
+
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     useGameModalStore.getState().refreshDerivedFromStores()

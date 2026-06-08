@@ -204,6 +204,10 @@ export const PlatformsScreen = (): React.JSX.Element => {
               <FontAwesomeIcon icon={faDownload} />
               Downloads
             </Button>
+            <Button onPress={() => navigate('/torrents')} variant="tertiary">
+              <FontAwesomeIcon icon={faFolder} />
+              Torrent test
+            </Button>
           </div>
           <div className="relative flex items-center gap-2 overflow-visible">
             {platformsLoading ? (

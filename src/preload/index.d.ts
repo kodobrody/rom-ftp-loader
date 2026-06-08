@@ -6,7 +6,11 @@ import type {
   GameMetadataUpdate,
   IgdbSearchResult,
   LibraryCacheSnapshot,
-  PlatformSummary
+  PlatformSummary,
+  TorrentBrowserSnapshot,
+  TorrentDownloadSnapshot,
+  TorrentGameGroup,
+  TorrentPlatformSummary
 } from '../shared/types'
 
 declare global {
@@ -18,6 +22,7 @@ declare global {
       saveConfig: (config: AppConfig) => Promise<AppConfig>
       openOnScreenKeyboard: () => Promise<boolean>
       pickDirectory: () => Promise<string | null>
+      pickTorrentFile: () => Promise<string | null>
       pickConfigFile: () => Promise<string | null>
       loadConfigFromFile: (filePath: string) => Promise<AppConfig>
       testFileServiceConnection: (config: AppConfig) => Promise<boolean>
@@ -45,8 +50,18 @@ declare global {
       cancelDownload: (gameId: string) => Promise<DownloadSnapshot>
       clearDownloadQueueHistory: () => Promise<DownloadSnapshot>
       getDownloadState: () => Promise<DownloadSnapshot>
+      getTorrentBrowserState: () => Promise<TorrentBrowserSnapshot>
+      refreshTorrentBrowserState: () => Promise<TorrentBrowserSnapshot>
+      listTorrentPlatforms: () => Promise<TorrentPlatformSummary[]>
+      listTorrentGames: (platformSourceName: string) => Promise<TorrentGameGroup[]>
+      getTorrentDownloadState: () => Promise<TorrentDownloadSnapshot>
+      downloadTorrentFile: (torrentFileId: string) => Promise<TorrentDownloadSnapshot>
       quitApp: () => Promise<void>
+      onTorrentBrowserState: (listener: (snapshot: TorrentBrowserSnapshot) => void) => () => void
       onDownloadProgress: (listener: (snapshot: DownloadSnapshot) => void) => () => void
+      onTorrentDownloadProgress: (
+        listener: (snapshot: TorrentDownloadSnapshot) => void
+      ) => () => void
       getVersions: () => NodeJS.ProcessVersions
     }
   }

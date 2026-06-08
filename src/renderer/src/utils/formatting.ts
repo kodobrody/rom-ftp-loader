@@ -10,7 +10,9 @@ export const emptyConfig: AppConfig = {
   ftpUsername: '',
   ftpPassword: '',
   rommApiToken: '',
-  inputKeyboardMode: 'gamepad'
+  inputKeyboardMode: 'gamepad',
+  torrentUploadMode: 'when_downloading',
+  torrentSources: []
 }
 
 export const emptySnapshot: DownloadSnapshot = {
