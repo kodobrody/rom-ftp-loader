@@ -34,7 +34,6 @@ export const TorrentTestScreen = (): React.JSX.Element => {
   } = useTorrentStore()
 
   useEffect(() => {
-    console.log('[TORRENT] TorrentTestScreen mount refresh')
     void hydrateDownloadSnapshot()
     void refreshBrowserState()
   }, [hydrateDownloadSnapshot, refreshBrowserState])

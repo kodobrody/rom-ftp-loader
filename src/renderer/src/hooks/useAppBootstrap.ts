@@ -122,11 +122,6 @@ export const useAppBootstrap = (): void => {
 
   useEffect(() => {
     const unsubscribe = window.api.onTorrentBrowserState((snapshot) => {
-      console.log('[TORRENT] browser-state event', {
-        files: snapshot.files.length,
-        resolvedNames: Object.keys(snapshot.resolvedNames).length,
-        sourceErrors: snapshot.sourceErrors.length
-      })
       useTorrentStore.getState().setBrowserSnapshot(snapshot)
     })
 

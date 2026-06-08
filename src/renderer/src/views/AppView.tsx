@@ -12,7 +12,8 @@ import { GamesScreen } from '../screens/GamesScreen'
 import { PlatformsScreen } from '../screens/PlatformsScreen'
 import { SearchScreen } from '../screens/SearchScreen'
 import { SetupScreen } from '../screens/SetupScreen'
-import { TorrentTestScreen } from '../screens/TorrentTestScreen'
+import { TorrentGamesScreen } from '../screens/TorrentGamesScreen'
+import { TorrentPlatformsScreen } from '../screens/TorrentPlatformsScreen'
 import { useAppStateStore } from '../store/appStateStore'
 
 export const AppView = (): React.JSX.Element => {
@@ -54,7 +55,11 @@ export const AppView = (): React.JSX.Element => {
           />
           <Route
             path="/torrents"
-            element={!isConfigured ? <Navigate replace to="/setup" /> : <TorrentTestScreen />}
+            element={!isConfigured ? <Navigate replace to="/setup" /> : <TorrentPlatformsScreen />}
+          />
+          <Route
+            path="/torrents/platform/:platformId"
+            element={!isConfigured ? <Navigate replace to="/setup" /> : <TorrentGamesScreen />}
           />
           <Route
             path="/"

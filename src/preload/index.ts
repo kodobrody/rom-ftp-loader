@@ -124,8 +124,8 @@ if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
+  } catch {
+    // contextBridge not available outside Electron sandbox
   }
 } else {
   // @ts-ignore (define in dts)

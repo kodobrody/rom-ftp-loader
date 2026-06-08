@@ -206,10 +206,6 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
     const savedConfig = await persistConfig({ torrentSources: nextTorrentSources })
 
     if (savedConfig) {
-      console.log('[TORRENT] source saved', {
-        torrentSourceCount: savedConfig.torrentSources.length,
-        latestSource: savedConfig.torrentSources[savedConfig.torrentSources.length - 1]
-      })
       void ensureBrowserState()
       void refreshBrowserState()
       setErrorMessage(null)
@@ -238,9 +234,6 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
     })
 
     if (savedConfig) {
-      console.log('[TORRENT] source removed', {
-        torrentSourceCount: savedConfig.torrentSources.length
-      })
       void refreshBrowserState()
       setErrorMessage(null)
       setInfoMessage('Torrent source removed.')

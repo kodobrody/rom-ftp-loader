@@ -1,262 +1,160 @@
-import { faArrowLeft, faRotateRight } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip, Modal } from '@heroui/react'
-import { useEffect, useState } from 'react'
+import { Button, Card } from '@heroui/react'
+import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { TorrentGameGroup } from '../../../shared/types'
+import { TorrentGameModal } from '../components/modals/TorrentGameModal'
 import { useTorrentStore } from '../store/torrentStore'
 import { formatBytes } from '../utils/formatting'
 
 export const TorrentGamesScreen = (): React.JSX.Element => {
   const navigate = useNavigate()
   const { platformId } = useParams<{ platformId: string }>()
-  const gamesLoading = useTorrentStore((store) => store.gamesLoading)
-  const games = useTorrentStore((store) => store.games)
-  const downloadSnapshot = useTorrentStore((store) => store.downloadSnapshot)
-  const loadGames = useTorrentStore((store) => store.loadGames)
-  const fetchGameMetadata = useTorrentStore((store) => store.fetchGameMetadata)
-  const queueDownload = useTorrentStore((store) => store.queueDownload)
-
-  const [selectedGame, setSelectedGame] = useState<TorrentGameGroup | null>(null)
+  const {
+    gamesLoading,
+    games,
+    downloadSnapshot,
+    openPlatform,
+    backToPlatforms,
+    openTorrentGame,
+    platforms
+  } = useTorrentStore()
 
   useEffect(() => {
     if (!platformId) {
       return
     }
 
-    void loadGames(platformId)
-  }, [platformId, loadGames])
+    const platform = platforms.find((p) => p.id === platformId)
 
-  useEffect(() => {
-    if (games.length === 0 || !platformId) {
-      return
+    if (platform) {
+      void openPlatform(platform)
     }
 
-    const gamesNeedingMetadata = games.filter((g) => g.metadataStatus === 'missing')
-
-    if (gamesNeedingMetadata.length === 0) {
-      return
+    return () => {
+      backToPlatforms()
     }
+  }, [platformId, platforms, openPlatform, backToPlatforms])
 
-    void fetchGameMetadata(platformId, gamesNeedingMetadata)
-  }, [games, platformId, fetchGameMetadata])
+  const getStatusForGame = (gameId: string) => {
+    const game = games.find((g) => g.id === gameId)
+    if (!game) return null
 
-  const getStatusForGame = (game: TorrentGameGroup) => {
     for (const file of game.files) {
       const item = downloadSnapshot.items.find((i) => i.torrentFileId === file.entryId)
-
-      if (item) {
-        return item
-      }
+      if (item) return item
     }
 
     return null
   }
 
-  const handleGameClick = (game: TorrentGameGroup) => {
-    if (game.files.length === 1) {
-      void queueDownload(game.files[0].entryId)
-      return
-    }
-
-    setSelectedGame(game)
-  }
-
   return (
     <section className="library-layout grid gap-4">
       <Card>
-        <Card.Content className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-          <div className="flex flex-wrap gap-3">
-            <Chip size="md" variant="soft">
-              {games.length} games
-            </Chip>
-          </div>
-          <div className="flex flex-wrap justify-end gap-3">
-            <Button onPress={() => navigate('/torrents')} variant="tertiary">
-              <FontAwesomeIcon icon={faArrowLeft} />
-              Back to platforms
-            </Button>
-            {platformId ? (
-              <Button
-                isDisabled={gamesLoading}
-                onPress={() => void loadGames(platformId)}
-                variant="tertiary"
-              >
-                <FontAwesomeIcon icon={faRotateRight} />
-                Reload
-              </Button>
-            ) : null}
-          </div>
+        <Card.Content className="flex flex-row flex-wrap items-center gap-3">
+          <Button onPress={() => navigate('/torrents')} variant="tertiary">
+            <FontAwesomeIcon icon={faArrowLeft} />
+            Back to platforms
+          </Button>
+          <Button onPress={() => navigate('/downloads')} variant="tertiary">
+            Downloads
+          </Button>
         </Card.Content>
       </Card>
 
-      {gamesLoading ? (
-        <Card>
-          <Card.Content className="grid min-h-40 place-items-center p-4 text-center text-zinc-400">
-            Loading games...
-          </Card.Content>
-        </Card>
-      ) : games.length === 0 ? (
-        <Card>
-          <Card.Content className="grid min-h-40 place-items-center p-4 text-center text-zinc-400">
-            No games found for this platform.
-          </Card.Content>
-        </Card>
-      ) : (
-        <div className="grid max-h-[72vh] gap-3 overflow-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
-          {games.map((game) => {
-            const downloadItem = getStatusForGame(game)
-            const isBusy =
-              downloadItem?.status === 'queued' ||
-              downloadItem?.status === 'downloading' ||
-              downloadItem?.status === 'extracting'
-
-            return (
-              <button
-                className="flex flex-col gap-2 rounded-xl bg-white/5 p-3 text-left transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isBusy}
-                key={game.id}
-                onClick={() => handleGameClick(game)}
-                type="button"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="grid h-16 w-12 shrink-0 place-items-center overflow-hidden rounded-md bg-black/30 text-[10px] text-zinc-500">
-                    {game.coverUrl ? (
-                      <img
-                        alt={game.displayName}
-                        className="h-full w-full object-cover"
-                        src={game.coverUrl}
-                      />
-                    ) : (
-                      'No cover'
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <strong className="block truncate text-sm text-zinc-100">
-                      {game.displayName}
-                    </strong>
-                    <span className="block text-xs text-zinc-400">
-                      {game.files.length > 1
-                        ? `${game.files.length} release groups`
-                        : game.files[0].releaseGroupName}
-                    </span>
-                    {downloadItem ? (
-                      <span
-                        className={`mt-1 block text-xs font-semibold ${
-                          downloadItem.status === 'completed'
-                            ? 'text-emerald-400'
-                            : downloadItem.status === 'error'
-                              ? 'text-rose-400'
-                              : 'text-cyan-400'
-                        }`}
-                      >
-                        {downloadItem.status === 'extracting'
-                          ? 'Extracting...'
-                          : downloadItem.status === 'downloading'
-                            ? `${downloadItem.progress}%`
-                            : downloadItem.status}
-                      </span>
-                    ) : (
-                      <span className="mt-1 block text-xs text-zinc-500">
-                        {formatBytes(game.files.reduce((sum, f) => sum + f.size, 0))}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {downloadItem && ['downloading', 'extracting'].includes(downloadItem.status) ? (
-                  <div className="h-1 overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full bg-linear-to-r from-blue-400 to-cyan-400 transition-all"
-                      style={{
-                        width:
-                          downloadItem.status === 'extracting'
-                            ? '100%'
-                            : `${downloadItem.progress}%`
-                      }}
-                    />
-                  </div>
-                ) : null}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      <Modal.Backdrop
-        isOpen={Boolean(selectedGame)}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setSelectedGame(null)
-          }
-        }}
-      >
-        <Modal.Container>
-          <Modal.Dialog className="w-full max-w-2xl">
-            <Modal.Header>
-              <Modal.Heading>{selectedGame?.displayName ?? ''}</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body className="grid gap-3 p-4">
-              <p className="text-sm text-zinc-400">Choose a release group to download from</p>
-              {selectedGame?.files.map((file) => {
-                const downloadItem = downloadSnapshot.items.find(
-                  (i) => i.torrentFileId === file.entryId
-                )
+      <Card>
+        <Card.Content className="grid gap-4">
+          {gamesLoading ? (
+            <p className="rounded-xl bg-white/5 p-6 text-center text-zinc-400">Loading games...</p>
+          ) : games.length === 0 ? (
+            <p className="rounded-xl bg-white/5 p-6 text-center text-zinc-400">
+              No games found for this platform.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 3xl:grid-cols-8">
+              {games.map((game) => {
+                const downloadItem = getStatusForGame(game.id)
                 const isBusy =
                   downloadItem?.status === 'queued' ||
                   downloadItem?.status === 'downloading' ||
                   downloadItem?.status === 'extracting'
+                const isCompleted = game.files.every((f) =>
+                  downloadSnapshot.items.some(
+                    (i) => i.torrentFileId === f.entryId && i.status === 'completed'
+                  )
+                )
+                const bottomStatusLabel = downloadItem
+                  ? downloadItem.status === 'completed'
+                    ? 'Downloaded'
+                    : `${downloadItem.status} ${downloadItem.status === 'downloading' ? `${downloadItem.progress}%` : ''}`
+                  : isCompleted
+                    ? 'Downloaded'
+                    : null
 
                 return (
-                  <div
-                    className="grid gap-2 rounded-xl bg-white/5 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-                    key={file.entryId}
+                  <button
+                    className={`relative flex flex-col overflow-hidden rounded-xl bg-white/5 p-2 text-left transition hover:bg-white/10 ${isBusy ? 'ring-1 ring-sky-300/40' : ''}`}
+                    disabled={false}
+                    key={game.id}
+                    onClick={() => openTorrentGame(game)}
+                    type="button"
                   >
-                    <div>
-                      <strong className="block truncate text-zinc-100">
-                        {file.releaseGroupName}
-                      </strong>
-                      <span className="block truncate text-xs text-zinc-400">{file.fileName}</span>
-                      <span className="block text-xs text-zinc-500">{formatBytes(file.size)}</span>
-                      {downloadItem ? (
-                        <span
-                          className={`mt-1 block text-xs font-semibold ${
-                            downloadItem.status === 'completed'
-                              ? 'text-emerald-400'
-                              : downloadItem.status === 'error'
-                                ? 'text-rose-400'
-                                : 'text-cyan-400'
-                          }`}
-                        >
-                          {downloadItem.status === 'extracting'
-                            ? 'Extracting...'
-                            : downloadItem.status === 'downloading'
-                              ? `${downloadItem.progress}%`
-                              : downloadItem.status}
-                        </span>
-                      ) : null}
+                    <span className="absolute right-2 top-2 z-10 rounded-full bg-black/65 px-2 py-0.5 text-xs font-semibold text-zinc-100">
+                      {(() => {
+                        const sizes = game.files.map((f) => f.size)
+                        const min = Math.min(...sizes)
+                        const max = Math.max(...sizes)
+                        return sizes.length > 1 && min !== max
+                          ? `${formatBytes(min)} – ${formatBytes(max)}`
+                          : formatBytes(min)
+                      })()}
+                    </span>
+
+                    {game.files.length > 1 ? (
+                      <span className="absolute left-2 top-2 z-10 rounded-full bg-blue-600/80 px-2 py-0.5 text-xs font-semibold text-white">
+                        {game.files.length} releases
+                      </span>
+                    ) : null}
+
+                    <div className="-mx-2 -mt-2 grid aspect-3/4 place-items-center overflow-hidden bg-black/25">
+                      {game.coverUrl ? (
+                        <img
+                          alt={game.displayName}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          src={game.coverUrl}
+                        />
+                      ) : (
+                        <div className="text-xs text-zinc-500">No cover</div>
+                      )}
                     </div>
-                    <Button
-                      isDisabled={isBusy || downloadItem?.status === 'completed'}
-                      onPress={() => {
-                        void queueDownload(file.entryId)
-                        setSelectedGame(null)
-                      }}
-                      variant={downloadItem?.status === 'completed' ? 'secondary' : 'primary'}
+
+                    <div className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1">
+                      <strong className="line-clamp-2 block max-h-8 text-center text-sm leading-4 text-zinc-100">
+                        {game.displayName}
+                      </strong>
+                    </div>
+
+                    <div
+                      className={`-mx-2 -mb-2 mt-auto flex h-8 items-center justify-center px-3 text-center text-xs font-semibold uppercase tracking-[0.08em] ${bottomStatusLabel ? 'text-white' : 'text-transparent'} ${
+                        bottomStatusLabel
+                          ? downloadItem && downloadItem.status !== 'completed'
+                            ? 'bg-sky-600'
+                            : 'bg-emerald-600'
+                          : 'bg-transparent'
+                      }`}
                     >
-                      {downloadItem?.status === 'completed'
-                        ? 'Downloaded'
-                        : isBusy
-                          ? 'Downloading...'
-                          : `Download from ${file.releaseGroupName}`}
-                    </Button>
-                  </div>
+                      {bottomStatusLabel ?? ''}
+                    </div>
+                  </button>
                 )
               })}
-            </Modal.Body>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </div>
+          )}
+        </Card.Content>
+      </Card>
+
+      <TorrentGameModal />
     </section>
   )
 }

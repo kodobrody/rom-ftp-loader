@@ -188,8 +188,6 @@ interface RomMetadataCache {
 }
 
 const METADATA_MISSING_RETRY_MS = 7 * 24 * 60 * 60 * 1000
-const TORRENT_METADATA_TIMEOUT_MS = 120_000
-const TORRENT_BROWSER_METADATA_TIMEOUT_MS = 10 * 60 * 1000 // 10 min — large torrents (e.g. Minerva_Myrient) have huge info dicts
 
 interface LibraryCacheFile extends LibraryCacheSnapshot {}
 
@@ -450,8 +448,6 @@ const fetchGameMetadataFromIgdb = async (
   try {
     const accessToken = await resolveTwitchAccessToken(config)
 
-    console.log(`[Twitch] Searching metadata for "${searchName}" (from "${fallbackName}")`)
-
     if (!fetchFromMain) {
       throw new Error('Fetch API is unavailable in the Electron main process')
     }
@@ -502,9 +498,7 @@ const fetchGameMetadataFromIgdb = async (
       status: 'found',
       fetchedAt: new Date().toISOString()
     }
-  } catch (error) {
-    console.error(`[IGDB] Metadata fetch failed for "${fallbackName}": ${getErrorMessage(error)}`)
-
+  } catch {
     return {
       displayName: titleCasePlatformName(fallbackName),
       coverUrl: null,
@@ -712,11 +706,6 @@ const normalizeTorrentSourceValue = (
     !trimmedSource.startsWith('magnet:?')
   ) {
     const normalized = trimmedSource.replace(/^magnet:/i, 'magnet:?')
-    console.log('[TORRENT] normalized source', {
-      sourceType,
-      source,
-      normalized
-    })
     return normalized
   }
 
@@ -969,8 +958,7 @@ const createTorrentClient = async (
 const addTorrentToClient = async (
   client: TorrentClientInstance,
   source: TorrentSource,
-  uploadMode: TorrentUploadMode,
-  timeoutMs: number = TORRENT_METADATA_TIMEOUT_MS
+  uploadMode: TorrentUploadMode
 ): Promise<TorrentInstance> => {
   if (source.sourceType === 'file' && !existsSync(source.source)) {
     throw new Error(`Torrent file not found: ${source.source}`)
@@ -978,27 +966,12 @@ const addTorrentToClient = async (
 
   const policy = resolveTorrentUploadPolicy(uploadMode)
 
-  console.log('[TORRENT] addTorrentToClient start', {
-    sourceId: source.id,
-    sourceType: source.sourceType,
-    label: source.label,
-    source: source.source,
-    uploadMode
-  })
-
   return await new Promise((resolve, reject) => {
     let settled = false
-    let timeoutId: NodeJS.Timeout | null = null
     let statusIntervalId: ReturnType<typeof globalThis.setInterval> | null = null
     let metadataPollId: ReturnType<typeof globalThis.setInterval> | null = null
-    let currentTorrent: TorrentInstance | null = null
 
     const finish = (callback: () => void): void => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
-      }
-
       if (statusIntervalId) {
         clearInterval(statusIntervalId)
         statusIntervalId = null
@@ -1012,36 +985,13 @@ const addTorrentToClient = async (
       callback()
     }
 
-    statusIntervalId = globalThis.setInterval(() => {
-      const torrent = currentTorrent as {
-        name?: string
-        progress?: number
-        downloaded?: number
-        length?: number
-        numPeers?: number
-        files?: Array<{ path?: string; name?: string; length?: number }>
-      } | null
-
-      console.log('[TORRENT] metadata heartbeat', {
-        sourceId: source.id,
-        label: source.label,
-        torrentName: torrent?.name ?? null,
-        numPeers: torrent?.numPeers ?? null,
-        fileCount: torrent?.files?.length ?? null,
-        hasLength: torrent?.length != null
-      })
-    }, 5000)
+    statusIntervalId = globalThis.setInterval(() => {}, 5000)
 
     const onClientError = (error: unknown) => {
       if (settled) {
         return
       }
 
-      console.error('[TORRENT] metadata client error', {
-        sourceId: source.id,
-        label: source.label,
-        error: getErrorMessage(error)
-      })
       settled = true
       finish(() => {
         client.off('error', onClientError)
@@ -1050,27 +1000,6 @@ const addTorrentToClient = async (
     }
 
     client.once('error', onClientError)
-
-    timeoutId = setTimeout(() => {
-      if (settled) {
-        return
-      }
-
-      console.error('[TORRENT] metadata timeout', {
-        sourceId: source.id,
-        label: source.label,
-        timeoutMs
-      })
-      settled = true
-      finish(() => {
-        client.off('error', onClientError)
-        const msg =
-          source.sourceType === 'magnet'
-            ? `Timed out reading torrent metadata for ${source.label}. The info dictionary may be very large — try adding a .torrent file instead of a magnet link.`
-            : `Timed out reading torrent metadata for ${source.label}.`
-        reject(new Error(msg))
-      })
-    }, timeoutMs)
 
     try {
       const torrentRef = client.add(
@@ -1085,13 +1014,6 @@ const addTorrentToClient = async (
             return
           }
 
-          currentTorrent = torrent
-          console.log('[TORRENT] resolved via ready callback', {
-            sourceId: source.id,
-            label: source.label,
-            torrentName: torrent.name ?? null,
-            fileCount: torrent.files?.length ?? 0
-          })
           settled = true
           finish(() => {
             client.off('error', onClientError)
@@ -1100,47 +1022,10 @@ const addTorrentToClient = async (
         }
       )
 
-      // Set currentTorrent immediately so heartbeat shows live peer count before metadata arrives
-      currentTorrent = torrentRef
-
-      // Log peer extended handshake after delay — extendedHandshake is empty at wire-connect time
-      let wireLogCount = 0
-      torrentRef.on('wire', (...args: unknown[]) => {
-        wireLogCount++
-        const wireIndex = wireLogCount
-        if (wireIndex > 5) return
-        const wire = args[0] as {
-          peerExtendedHandshake?: { m?: Record<string, number>; [key: string]: unknown }
-          remoteAddress?: string
-        } | null
-        const addr = wire?.remoteAddress ?? 'unknown'
-        setTimeout(() => {
-          const m = wire?.peerExtendedHandshake?.m
-          console.log('[TORRENT] wire peer handshake', {
-            sourceId: source.id,
-            wire: wireIndex,
-            remoteAddress: addr,
-            peerExtensions: m ? Object.keys(m) : null,
-            hasUtMetadata: Boolean(m?.ut_metadata)
-          })
-        }, 3000)
-      })
-
       // Poll every 500ms for name being set — WebTorrent v2 'metadata' event is unreliable
       metadataPollId = globalThis.setInterval(() => {
         const t = torrentRef as { name?: string; files?: TorrentFileHandle[] }
         if (!settled && t.name && t.files && t.files.length > 0) {
-          console.log('[TORRENT] metadata resolved via poll', {
-            sourceId: source.id,
-            label: source.label,
-            torrentName: t.name,
-            fileCount: t.files.length,
-            files: t.files.map((file) => ({
-              path: file.path ?? null,
-              name: file.name ?? null,
-              length: file.length ?? null
-            }))
-          })
           settled = true
           finish(() => {
             client.off('error', onClientError)
@@ -1155,17 +1040,6 @@ const addTorrentToClient = async (
           return
         }
 
-        console.log('[TORRENT] metadata resolved via metadata event', {
-          sourceId: source.id,
-          label: source.label,
-          torrentName: (torrentRef as { name?: string }).name ?? null,
-          fileCount: (torrentRef as { files?: unknown[] }).files?.length ?? 0,
-          files: ((torrentRef as { files?: TorrentFileHandle[] }).files ?? []).map((file) => ({
-            path: file.path ?? null,
-            name: file.name ?? null,
-            length: file.length ?? null
-          }))
-        })
         settled = true
         finish(() => {
           client.off('error', onClientError)
@@ -1173,29 +1047,9 @@ const addTorrentToClient = async (
         })
       })
 
-      torrentRef.on('warning', (...args: unknown[]) => {
-        console.warn('[TORRENT] torrent warning', {
-          sourceId: source.id,
-          label: source.label,
-          warn: String(args[0])
-        })
-      })
-
-      torrentRef.on('noPeers', (...args: unknown[]) => {
-        console.warn('[TORRENT] no peers found', {
-          sourceId: source.id,
-          label: source.label,
-          announceType: String(args[0])
-        })
-      })
-
-      torrentRef.on('error', (...args: unknown[]) => {
-        console.error('[TORRENT] torrent-level error', {
-          sourceId: source.id,
-          label: source.label,
-          err: String(args[0])
-        })
-      })
+      torrentRef.on('warning', () => {})
+      torrentRef.on('noPeers', () => {})
+      torrentRef.on('error', () => {})
     } catch (error) {
       if (settled) {
         return
@@ -1378,7 +1232,6 @@ const getTorrentGames = async (
 
 const refreshTorrentBrowserState = async (config: AppConfig): Promise<TorrentBrowserSnapshot> => {
   if (torrentBrowserRefreshPromise) {
-    console.log('[TORRENT] refreshTorrentBrowserState joined in-flight refresh')
     return torrentBrowserRefreshPromise
   }
 
@@ -1387,63 +1240,28 @@ const refreshTorrentBrowserState = async (config: AppConfig): Promise<TorrentBro
     const sourceErrors: TorrentBrowserSnapshot['sourceErrors'] = []
     const resolvedNames: Record<string, string> = {}
 
-    console.log('[TORRENT] refreshTorrentBrowserState start', {
-      sourceCount: config.torrentSources.length
-    })
-
     torrentFileLookup.clear()
 
     for (const source of config.torrentSources) {
       let client: TorrentClientInstance | null = null
 
       try {
-        console.log('[TORRENT] refreshing source', {
-          sourceId: source.id,
-          label: source.label,
-          sourceType: source.sourceType,
-          source: source.source
-        })
         client = await createTorrentClient(config.torrentUploadMode)
         const torrentClient = client
-        const torrent = await addTorrentToClient(
-          torrentClient,
-          source,
-          'when_downloading',
-          TORRENT_BROWSER_METADATA_TIMEOUT_MS
-        )
+        const torrent = await addTorrentToClient(torrentClient, source, 'when_downloading')
 
         if (torrent.name) {
           resolvedNames[source.id] = torrent.name
         }
 
-        console.log('[TORRENT] source metadata ready', {
-          sourceId: source.id,
-          label: source.label,
-          source: source.source,
-          torrentName: torrent.name ?? null,
-          matchedFiles: torrent.files?.length ?? 0
-        })
-
         for (const torrentFile of torrent.files ?? []) {
           const entry = extractTorrentFileEntry(source, torrentFile)
 
           if (!entry) {
-            console.log('[TORRENT] skipping unmatched torrent file', {
-              sourceId: source.id,
-              torrentPath: String(torrentFile.path ?? torrentFile.name ?? ''),
-              torrentName: torrent.name ?? null
-            })
             continue
           }
 
           files.push(entry)
-          console.log('[TORRENT] matched torrent file', {
-            sourceId: source.id,
-            entryId: entry.id,
-            platform: entry.matchedPlatformName,
-            releaseGroup: entry.releaseGroupName,
-            fileName: entry.fileName
-          })
           torrentFileLookup.set(entry.id, {
             source,
             relativePath: entry.relativePath,
@@ -1455,11 +1273,6 @@ const refreshTorrentBrowserState = async (config: AppConfig): Promise<TorrentBro
           })
         }
       } catch (error) {
-        console.error('[TORRENT] source refresh failed', {
-          sourceId: source.id,
-          label: source.label,
-          error: getErrorMessage(error)
-        })
         sourceErrors.push({
           torrentId: source.id,
           message: getErrorMessage(error)
@@ -1490,12 +1303,6 @@ const refreshTorrentBrowserState = async (config: AppConfig): Promise<TorrentBro
     }
 
     void saveTorrentBrowserCache(currentTorrentBrowserSnapshot)
-
-    console.log('[TORRENT] refreshTorrentBrowserState done', {
-      fileCount: currentTorrentBrowserSnapshot.files.length,
-      sourceErrorCount: currentTorrentBrowserSnapshot.sourceErrors.length,
-      resolvedNameCount: Object.keys(currentTorrentBrowserSnapshot.resolvedNames).length
-    })
 
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send('torrents:browser-state', currentTorrentBrowserSnapshot)
@@ -2701,7 +2508,6 @@ const listGames = async (
 
     if (cacheDirty) {
       await saveMetadataCache(metadataCache)
-      console.log(`[IGDB] Fetched ${fetchedCount} metadata entries for ${platformName}`)
     }
 
     const libraryCache = await readLibraryCache()
@@ -3504,7 +3310,6 @@ ipcMain.handle(
   'metadata:fetch-game',
   async (_event, platformName: string, romFileName: string, forceRefetch?: boolean) => {
     const config = await readConfigFromDisk()
-    assertConfigured(config)
     return fetchMetadataForSingleGame(config, platformName, romFileName, Boolean(forceRefetch))
   }
 )
@@ -3550,22 +3355,11 @@ ipcMain.handle('downloads:get-state', async () => currentDownloadSnapshot)
 ipcMain.handle('torrents:get-browser-state', async () => {
   const config = await readConfigFromDisk()
 
-  console.log('[TORRENT] get-browser-state', {
-    cachedFiles: currentTorrentBrowserSnapshot.files.length,
-    sourceCount: config.torrentSources.length
-  })
-
   if (currentTorrentBrowserSnapshot.files.length === 0) {
     const cached = await readTorrentBrowserCache()
 
     if (cached) {
-      console.log('[TORRENT] using cached torrent browser snapshot', {
-        fileCount: cached.files.length,
-        resolvedNameCount: Object.keys(cached.resolvedNames).length,
-        sourceErrorCount: cached.sourceErrors.length
-      })
       currentTorrentBrowserSnapshot = cached
-
       for (const file of cached.files) {
         torrentFileLookup.set(file.id, {
           source: config.torrentSources.find((s) => s.id === file.torrentId) ?? {
@@ -3588,7 +3382,6 @@ ipcMain.handle('torrents:get-browser-state', async () => {
     }
   }
 
-  console.log('[TORRENT] refreshing browser state from sources')
   return refreshTorrentBrowserState(config)
 })
 

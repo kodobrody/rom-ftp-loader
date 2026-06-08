@@ -1,16 +1,13 @@
-import { faArrowLeft, faRotateRight } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faFolder } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Button, Card, Chip } from '@heroui/react'
+import { Button, Card, Chip, ProgressCircle } from '@heroui/react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTorrentStore } from '../store/torrentStore'
 
 export const TorrentPlatformsScreen = (): React.JSX.Element => {
   const navigate = useNavigate()
-  const browserLoading = useTorrentStore((store) => store.browserLoading)
-  const platforms = useTorrentStore((store) => store.platforms)
-  const ensureBrowserState = useTorrentStore((store) => store.ensureBrowserState)
-  const refreshBrowserState = useTorrentStore((store) => store.refreshBrowserState)
+  const { platforms, browserLoading, browserSnapshot, ensureBrowserState } = useTorrentStore()
 
   useEffect(() => {
     void ensureBrowserState()
@@ -18,64 +15,75 @@ export const TorrentPlatformsScreen = (): React.JSX.Element => {
 
   return (
     <section className="library-layout grid gap-4">
-      <Card>
-        <Card.Content className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-          <div className="flex flex-wrap gap-3">
-            <Chip size="md" variant="soft">
-              {platforms.length} platforms
-            </Chip>
-          </div>
-          <div className="flex flex-wrap justify-end gap-3">
+      <Card className="overflow-visible">
+        <Card.Content className="flex flex-row flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button onPress={() => navigate('/')} variant="tertiary">
               <FontAwesomeIcon icon={faArrowLeft} />
               Back to library
             </Button>
-            <Button
-              isDisabled={browserLoading}
-              onPress={() => void refreshBrowserState()}
-              variant="tertiary"
-            >
-              <FontAwesomeIcon icon={faRotateRight} />
-              {browserLoading ? 'Refreshing...' : 'Refresh'}
-            </Button>
+            <Chip color="default" size="md" variant="soft">
+              {platforms.length} platforms
+            </Chip>
+            <Chip color="default" size="md" variant="soft">
+              {browserSnapshot.files.length} files indexed
+            </Chip>
+            {browserSnapshot.sourceErrors.length > 0 ? (
+              <Chip color="warning" size="md" variant="soft">
+                {browserSnapshot.sourceErrors.length} source
+                {browserSnapshot.sourceErrors.length === 1 ? ' error' : ' errors'}
+              </Chip>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            {browserLoading ? (
+              <ProgressCircle aria-label="Loading torrent data" isIndeterminate size="sm" />
+            ) : null}
           </div>
         </Card.Content>
       </Card>
 
+      {browserSnapshot.sourceErrors.length > 0 ? (
+        <Card>
+          <Card.Content className="grid gap-2">
+            {browserSnapshot.sourceErrors.map((err) => (
+              <p
+                className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-100"
+                key={err.torrentId}
+              >
+                {err.message}
+              </p>
+            ))}
+          </Card.Content>
+        </Card>
+      ) : null}
+
       {browserLoading && platforms.length === 0 ? (
         <Card>
-          <Card.Content className="grid min-h-40 place-items-center p-4 text-center text-zinc-400">
-            Reading torrent metadata...
-          </Card.Content>
+          <Card.Content className="text-center">Loading torrent platforms...</Card.Content>
         </Card>
       ) : platforms.length === 0 ? (
         <Card>
-          <Card.Content className="grid min-h-40 place-items-center p-4 text-center text-zinc-400">
-            No torrent files matched the Minerva_Myrient structure. Add a torrent source in
-            settings.
+          <Card.Content className="text-center">
+            No torrent sources configured, or no matching files found. Add a torrent source in
+            Setup.
           </Card.Content>
         </Card>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 3xl:grid-cols-8">
           {platforms.map((platform) => (
-            <button
-              className="grid gap-2 rounded-xl bg-white/5 p-4 text-left transition hover:bg-white/10"
+            <Button
+              className="flex h-40 w-full flex-col items-center justify-center gap-0 text-left transition"
               key={platform.id}
-              onClick={() => navigate(`/torrents/platform/${platform.id}`)}
-              type="button"
+              onClick={() => navigate(`/torrents/platform/${encodeURIComponent(platform.id)}`)}
+              variant="tertiary"
             >
-              <strong className="text-lg text-zinc-100">{platform.displayName}</strong>
-              <div className="flex flex-wrap gap-2">
-                <Chip color="default" size="sm" variant="soft">
-                  {platform.fileCount} files
-                </Chip>
-                {platform.releaseGroups.map((group) => (
-                  <Chip color="accent" key={group} size="sm" variant="soft">
-                    {group}
-                  </Chip>
-                ))}
-              </div>
-            </button>
+              <FontAwesomeIcon className="mb-4 text-6xl text-blue-300" icon={faFolder} />
+              <span className="whitespace-normal text-center text-zinc-400">
+                {platform.displayName}
+              </span>
+              <span className="text-zinc-400">{platform.fileCount} files</span>
+            </Button>
           ))}
         </div>
       )}
