@@ -89,11 +89,7 @@ export const SetupTorrentModal = ({
                   onSelectionChange={(selection) => {
                     const selected = String(selection) as TorrentUploadMode
                     const mode: TorrentUploadMode =
-                      selected === 'always'
-                        ? 'always'
-                        : selected === 'never'
-                          ? 'never'
-                          : 'when_downloading'
+                      selected === 'always' ? 'always' : 'when_downloading'
                     updateConfig({ torrentUploadMode: mode })
                     void persistConfig({ torrentUploadMode: mode })
                   }}
@@ -111,10 +107,6 @@ export const SetupTorrentModal = ({
                       </ListBox.Item>
                       <ListBox.Item id="when_downloading" textValue="When downloading">
                         When downloading
-                        <ListBox.ItemIndicator />
-                      </ListBox.Item>
-                      <ListBox.Item id="never" textValue="Never">
-                        Never
                         <ListBox.ItemIndicator />
                       </ListBox.Item>
                     </ListBox>

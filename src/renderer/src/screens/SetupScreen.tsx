@@ -400,9 +400,7 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
                   {config.torrentSources.length === 1 ? '' : 's'} ·{' '}
                   {config.torrentUploadMode === 'always'
                     ? 'Upload always'
-                    : config.torrentUploadMode === 'never'
-                      ? 'Upload never'
-                      : 'Upload when downloading'}
+                    : 'Upload when downloading'}
                 </span>
               </div>
             </div>

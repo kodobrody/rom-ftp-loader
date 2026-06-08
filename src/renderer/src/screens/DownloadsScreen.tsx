@@ -170,9 +170,7 @@ export const DownloadsScreen = (): React.JSX.Element => {
                           </Chip>
                           <strong className="text-zinc-100">{item.fileName}</strong>
                         </div>
-                        <span className="text-sm text-zinc-400">
-                          {item.platformName} · {item.torrentLabel}
-                        </span>
+                        <span className="text-sm text-zinc-400">{item.platformName}</span>
                         <span className="text-xs text-zinc-500">
                           {formatBytes(item.bytesTransferred)} / {formatBytes(item.totalBytes)}
                         </span>

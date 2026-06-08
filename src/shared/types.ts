@@ -1,6 +1,6 @@
 export type FileServiceType = 'ftp' | 'ftps' | 'sftp' | 'nextcloud' | 'romm'
 export type InputKeyboardMode = 'always' | 'gamepad'
-export type TorrentUploadMode = 'always' | 'when_downloading' | 'never'
+export type TorrentUploadMode = 'always' | 'when_downloading'
 export type TorrentSourceType = 'magnet' | 'file'
 export type TorrentMatchConfidence = 'exact' | 'fuzzy' | 'fallback'
 export type TorrentDownloadStatus =

@@ -122,6 +122,7 @@ interface TorrentFileHandle {
   select?: () => void
   deselect?: () => void
   createReadStream?: () => TorrentReadableStream
+  on?: (event: string, listener: (...args: unknown[]) => void) => void
 }
 
 interface TorrentInstance {
@@ -134,7 +135,12 @@ interface TorrentInstance {
 interface TorrentClientInstance {
   add: (
     torrentId: string,
-    options: { destroyStoreOnDestroy: boolean; uploads?: number | false; path?: string },
+    options: {
+      destroyStoreOnDestroy: boolean
+      uploads?: number | false
+      path?: string
+      deselect?: boolean
+    },
     onTorrent: (torrent: TorrentInstance) => void
   ) => TorrentInstance
   once: (event: 'error', listener: (error: unknown) => void) => void
@@ -147,6 +153,7 @@ type WebTorrentConstructor = new (options: {
   tracker: boolean
   seedOutgoingConnections?: boolean
   uploadLimit?: number
+  downloadLimit: number
 }) => TorrentClientInstance
 
 interface RommPlatformDto {
@@ -768,10 +775,6 @@ const sanitizeTorrentUploadMode = (value: unknown): TorrentUploadMode => {
     return 'always'
   }
 
-  if (normalizedValue === 'never') {
-    return 'never'
-  }
-
   return 'when_downloading'
 }
 
@@ -914,24 +917,16 @@ const resolveTorrentUploadPolicy = (
   uploadMode: TorrentUploadMode
 ): {
   uploadLimit: number
+  downloadLimit: number
   seedOutgoingConnections: boolean
   uploads: number | false
   destroyStoreOnDestroy: boolean
   keepClientAfterCompletion: boolean
 } => {
-  if (uploadMode === 'never') {
-    return {
-      uploadLimit: 0,
-      seedOutgoingConnections: false,
-      uploads: false,
-      destroyStoreOnDestroy: true,
-      keepClientAfterCompletion: false
-    }
-  }
-
   if (uploadMode === 'always') {
     return {
       uploadLimit: -1,
+      downloadLimit: -1,
       seedOutgoingConnections: true,
       uploads: 10,
       destroyStoreOnDestroy: false,
@@ -941,6 +936,7 @@ const resolveTorrentUploadPolicy = (
 
   return {
     uploadLimit: -1,
+    downloadLimit: -1,
     seedOutgoingConnections: true,
     uploads: 10,
     destroyStoreOnDestroy: true,
@@ -959,14 +955,16 @@ const createTorrentClient = async (
     dht: true,
     tracker: true,
     seedOutgoingConnections: options?.forceNoOutgoing ? false : policy.seedOutgoingConnections,
-    uploadLimit: policy.uploadLimit
+    uploadLimit: policy.uploadLimit,
+    downloadLimit: policy.downloadLimit
   })
 }
 
 const addTorrentToClient = async (
   client: TorrentClientInstance,
   source: TorrentSource,
-  uploadMode: TorrentUploadMode
+  uploadMode: TorrentUploadMode,
+  downloadPath?: string
 ): Promise<TorrentInstance> => {
   if (source.sourceType === 'file' && !existsSync(source.source)) {
     throw new Error(`Torrent file not found: ${source.source}`)
@@ -976,24 +974,10 @@ const addTorrentToClient = async (
 
   return await new Promise((resolve, reject) => {
     let settled = false
-    let statusIntervalId: ReturnType<typeof globalThis.setInterval> | null = null
-    let metadataPollId: ReturnType<typeof globalThis.setInterval> | null = null
 
     const finish = (callback: () => void): void => {
-      if (statusIntervalId) {
-        clearInterval(statusIntervalId)
-        statusIntervalId = null
-      }
-
-      if (metadataPollId) {
-        clearInterval(metadataPollId)
-        metadataPollId = null
-      }
-
       callback()
     }
-
-    statusIntervalId = globalThis.setInterval(() => {}, 5000)
 
     const onClientError = (error: unknown) => {
       if (settled) {
@@ -1010,14 +994,15 @@ const addTorrentToClient = async (
     client.once('error', onClientError)
 
     try {
-      const torrentRef = client.add(
+      client.add(
         source.source,
         {
           destroyStoreOnDestroy: policy.destroyStoreOnDestroy,
-          uploads: policy.uploads
+          uploads: policy.uploads,
+          ...(downloadPath !== undefined ? { path: downloadPath, deselect: true } : {})
         },
         (torrent) => {
-          // 'ready' callback — fallback if metadata event was missed
+          // Called when torrent is ready (metadata available and store initialized)
           if (settled) {
             return
           }
@@ -1029,35 +1014,6 @@ const addTorrentToClient = async (
           })
         }
       )
-
-      // Poll every 500ms for name being set — WebTorrent v2 'metadata' event is unreliable
-      metadataPollId = globalThis.setInterval(() => {
-        const t = torrentRef as { name?: string; files?: TorrentFileHandle[] }
-        if (!settled && t.name && t.files && t.files.length > 0) {
-          settled = true
-          finish(() => {
-            client.off('error', onClientError)
-            resolve(torrentRef)
-          })
-        }
-      }, 500)
-
-      // Resolve as soon as metadata is available — fires before 'ready'/storage setup
-      torrentRef.on('metadata', () => {
-        if (settled) {
-          return
-        }
-
-        settled = true
-        finish(() => {
-          client.off('error', onClientError)
-          resolve(torrentRef)
-        })
-      })
-
-      torrentRef.on('warning', () => {})
-      torrentRef.on('noPeers', () => {})
-      torrentRef.on('error', () => {})
     } catch (error) {
       if (settled) {
         return
@@ -1369,7 +1325,6 @@ const runTorrentFileDownload = async (
 ): Promise<void> => {
   let client: TorrentClientInstance | null = null
   let progressInterval: NodeJS.Timeout | null = null
-  const partialTargetPath = `${downloadItem.targetPath}.games2-part`
   let archiveAvailable = false
   let keepClientAliveForSeeding = false
   const uploadMode = sanitizeTorrentUploadMode(config.torrentUploadMode)
@@ -1429,33 +1384,50 @@ const runTorrentFileDownload = async (
       error: null
     }))
 
-    const torrent = await addTorrentToClient(torrentClient, descriptor.source, uploadMode)
+    // Download directly into the target drive — no cross-device rename issues
+    const downloadBaseDir = dirname(downloadItem.targetPath)
+    await mkdir(downloadBaseDir, { recursive: true })
+
+    const torrent = await addTorrentToClient(
+      torrentClient,
+      descriptor.source,
+      uploadMode,
+      downloadBaseDir
+    )
 
     const targetFile = (torrent.files ?? []).find(
       (file) =>
         normalizeTorrentPath(String(file.path ?? file.name ?? '')) === descriptor.relativePath
     )
 
-    if (!targetFile || typeof targetFile.createReadStream !== 'function') {
+    if (!targetFile) {
       throw new Error('The selected file was not found in the torrent metadata.')
     }
 
-    for (const file of torrent.files ?? []) {
-      file.deselect?.()
-    }
-
+    // All files start deselected (deselect:true in add opts). Select only the target.
     targetFile.select?.()
 
-    await mkdir(dirname(downloadItem.targetPath), { recursive: true })
-
-    if (existsSync(partialTargetPath)) {
-      await unlink(partialTargetPath).catch(() => undefined)
-    }
+    // Track progress and detect cancellation
+    let downloadSettled = false
+    let downloadResolve: (() => void) | null = null
+    let downloadReject: ((err: Error) => void) | null = null
 
     progressInterval = setInterval(() => {
+      if (downloadSettled) return
+
+      const itemStillExists = currentTorrentDownloadSnapshot.items.some(
+        (item) => item.id === downloadItem.id
+      )
+
+      if (!itemStillExists) {
+        downloadSettled = true
+        downloadReject?.(new Error('Download was cancelled.'))
+        return
+      }
+
       const bytesTransferred = Math.min(
         descriptor.size,
-        Math.max(0, Number(targetFile.downloaded ?? torrent.downloaded ?? 0))
+        Math.max(0, Number(targetFile.downloaded ?? 0))
       )
 
       updateTorrentDownloadItem(downloadItem.id, (item) => ({
@@ -1466,43 +1438,63 @@ const runTorrentFileDownload = async (
             ? Math.min(99, Math.round((bytesTransferred / descriptor.size) * 100))
             : 0
       }))
+
+      // Completion check as fallback if events are missed
+      if (descriptor.size > 0 && bytesTransferred >= descriptor.size) {
+        downloadSettled = true
+        downloadResolve?.()
+      }
     }, 350)
 
     await new Promise<void>((resolve, reject) => {
-      const readStream = targetFile.createReadStream?.()
+      downloadResolve = resolve
+      downloadReject = reject
 
-      if (!readStream) {
-        reject(new Error('Unable to create a torrent file stream.'))
-        return
-      }
+      targetFile.on?.('done', () => {
+        if (downloadSettled) return
+        downloadSettled = true
+        resolve()
+      })
 
-      const writeStream = createWriteStream(partialTargetPath)
+      torrent.on('idle', () => {
+        if (downloadSettled) return
+        downloadSettled = true
+        resolve()
+      })
 
-      const onError = (error: unknown) => {
-        readStream.destroy()
-        writeStream.destroy()
-        reject(error)
-      }
-
-      readStream.once('error', onError)
-      writeStream.once('error', onError)
-      writeStream.once('finish', () => resolve())
-      readStream.pipe(writeStream)
+      torrent.on('error', (err: unknown) => {
+        if (downloadSettled) return
+        downloadSettled = true
+        reject(err instanceof Error ? err : new Error(String(err)))
+      })
     })
 
-    if (existsSync(downloadItem.targetPath)) {
-      await unlink(downloadItem.targetPath).catch((error: unknown) => {
+    // File was written to downloadBaseDir/relativePath — move it to the flat targetPath
+    const relativeParts = descriptor.relativePath.split('/')
+    const downloadedFilePath = join(downloadBaseDir, ...relativeParts)
+
+    if (downloadedFilePath !== downloadItem.targetPath) {
+      if (existsSync(downloadItem.targetPath)) {
+        await unlink(downloadItem.targetPath).catch((error: unknown) => {
+          throw new Error(
+            `Could not replace existing file at ${downloadItem.targetPath}: ${getErrorMessage(error)}`
+          )
+        })
+      }
+
+      await rename(downloadedFilePath, downloadItem.targetPath).catch((error: unknown) => {
         throw new Error(
-          `Could not replace existing file at ${downloadItem.targetPath}: ${getErrorMessage(error)}`
+          `Could not move downloaded file to ${downloadItem.targetPath}: ${getErrorMessage(error)}`
         )
       })
-    }
 
-    await rename(partialTargetPath, downloadItem.targetPath).catch((error: unknown) => {
-      throw new Error(
-        `Could not finalize torrent download at ${downloadItem.targetPath}: ${getErrorMessage(error)}`
-      )
-    })
+      // Clean up the torrent group subdirectory left behind (best-effort)
+      if (relativeParts.length > 1) {
+        await rm(join(downloadBaseDir, relativeParts[0]), { recursive: true, force: true }).catch(
+          () => undefined
+        )
+      }
+    }
 
     archiveAvailable = true
     await extractArchiveIfNeeded(downloadItem.targetPath)
@@ -1518,10 +1510,6 @@ const runTorrentFileDownload = async (
     }))
   } catch (error) {
     try {
-      if (existsSync(partialTargetPath)) {
-        await unlink(partialTargetPath)
-      }
-
       if (!archiveAvailable && existsSync(downloadItem.targetPath)) {
         await unlink(downloadItem.targetPath)
       }
