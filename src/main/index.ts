@@ -48,6 +48,7 @@ import {
   METADATA_CACHE_FILE_NAME,
   PLATFORM_DEFINITIONS,
   TORRENT_BROWSER_CACHE_FILE_NAME,
+  TORRENT_FILES_DIR_NAME,
   TWITCH_TOKEN_URL
 } from './constants'
 
@@ -3147,7 +3148,7 @@ ipcMain.handle('app:pick-directory', async () => {
 
 ipcMain.handle('app:pick-torrent-file', async () => {
   const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Torrent Files', extensions: ['torrent'] }]
   })
 
@@ -3155,7 +3156,17 @@ ipcMain.handle('app:pick-torrent-file', async () => {
     return null
   }
 
-  return result.filePaths[0]
+  const torrentFilesDir = join(app.getPath('userData'), TORRENT_FILES_DIR_NAME)
+  await mkdir(torrentFilesDir, { recursive: true })
+
+  const destPaths: string[] = []
+  for (const sourcePath of result.filePaths) {
+    const fileName = basename(sourcePath)
+    const destPath = join(torrentFilesDir, fileName)
+    await copyFile(sourcePath, destPath)
+    destPaths.push(destPath)
+  }
+  return destPaths
 })
 
 ipcMain.handle('app:pick-config-file', async () => {

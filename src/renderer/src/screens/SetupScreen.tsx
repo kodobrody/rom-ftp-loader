@@ -2,20 +2,21 @@ import {
   faArrowLeft,
   faFolder,
   faImage,
-  faLink,
   faPenToSquare,
   faPlus,
   faServer,
+  faSkullCrossbones,
   faTrashCan
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Button, Card, Input, Label, ListBox, Select } from '@heroui/react'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { InputKeyboardMode, TorrentUploadMode } from '../../../shared/types'
+import type { InputKeyboardMode } from '../../../shared/types'
 import { SetupConnectionModal } from '../components/modals/SetupConnectionModal'
 import { SetupDeleteConfirmModal } from '../components/modals/SetupDeleteConfirmModal'
 import { SetupIgdbModal } from '../components/modals/SetupIgdbModal'
+import { SetupTorrentModal } from '../components/modals/SetupTorrentModal'
 import { useAppStateStore } from '../store/appStateStore'
 import { useKeyboardModalStore } from '../store/modals/keyboardModalStore'
 import { useSetupStore } from '../store/setupStore'
@@ -36,9 +37,6 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
     setupReady,
     updateConfig
   } = useSetupStore()
-  const browserSnapshot = useTorrentStore((store) => store.browserSnapshot)
-  const ensureBrowserState = useTorrentStore((store) => store.ensureBrowserState)
-  const refreshBrowserState = useTorrentStore((store) => store.refreshBrowserState)
   const { setKeyboardTarget, setShowOnScreenKeyboard } = useKeyboardModalStore()
   const { setErrorMessage, setInfoMessage, setOnboardingActive } = useAppStateStore()
   const navigate = useNavigate()
@@ -47,11 +45,43 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
   const [showIgdbModal, setShowIgdbModal] = useState(false)
   const [showDeleteIgdbModal, setShowDeleteIgdbModal] = useState(false)
   const [showResetAppDataModal, setShowResetAppDataModal] = useState(false)
-  const [magnetInput, setMagnetInput] = useState('')
+  const [showTorrentModal, setShowTorrentModal] = useState(false)
+  const [isTorrentPicking, setIsTorrentPicking] = useState(false)
+  const ensureBrowserState = useTorrentStore((store) => store.ensureBrowserState)
+  const refreshBrowserState = useTorrentStore((store) => store.refreshBrowserState)
 
-  useEffect(() => {
-    void ensureBrowserState()
-  }, [ensureBrowserState])
+  const handlePickTorrentFile = async (): Promise<void> => {
+    setIsTorrentPicking(true)
+    try {
+      const pickedFiles = await window.api.pickTorrentFile()
+
+      if (!pickedFiles || pickedFiles.length === 0) {
+        return
+      }
+
+      const newSources = pickedFiles.map((filePath) => ({
+        id: `torrent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        label: filePath.split(/[\\/]/).pop() || 'Torrent file',
+        sourceType: 'file' as const,
+        source: filePath
+      }))
+
+      const savedConfig = await persistConfig({
+        torrentSources: [...config.torrentSources, ...newSources]
+      })
+
+      if (savedConfig) {
+        void ensureBrowserState()
+        void refreshBrowserState()
+        setErrorMessage(null)
+        setInfoMessage('Torrent source added.')
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to pick a torrent file.')
+    } finally {
+      setIsTorrentPicking(false)
+    }
+  }
 
   const ftpParts = useMemo(() => {
     const isHttpService =
@@ -175,71 +205,6 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
     setShowOnScreenKeyboard(true)
   }
 
-  const handleAddTorrentSource = async (
-    sourceType: 'magnet' | 'file',
-    sourceValue: string,
-    label?: string
-  ): Promise<void> => {
-    const nextSource = sourceValue.trim()
-
-    if (!nextSource) {
-      setErrorMessage(
-        sourceType === 'magnet' ? 'Paste a magnet link first.' : 'Pick a torrent file first.'
-      )
-      return
-    }
-
-    const nextTorrentSources = [
-      ...config.torrentSources,
-      {
-        id: `torrent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        label:
-          label?.trim() ||
-          (sourceType === 'file'
-            ? nextSource.split(/[\\/]/).pop() || 'Torrent file'
-            : 'Magnet link'),
-        sourceType,
-        source: nextSource
-      }
-    ]
-
-    const savedConfig = await persistConfig({ torrentSources: nextTorrentSources })
-
-    if (savedConfig) {
-      void ensureBrowserState()
-      void refreshBrowserState()
-      setErrorMessage(null)
-      setInfoMessage('Torrent source added.')
-      setMagnetInput('')
-    }
-  }
-
-  const handlePickTorrentFile = async (): Promise<void> => {
-    try {
-      const pickedFile = await window.api.pickTorrentFile()
-
-      if (!pickedFile) {
-        return
-      }
-
-      await handleAddTorrentSource('file', pickedFile, pickedFile.split(/[\\/]/).pop())
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to pick a torrent file.')
-    }
-  }
-
-  const handleDeleteTorrentSource = async (torrentId: string): Promise<void> => {
-    const savedConfig = await persistConfig({
-      torrentSources: config.torrentSources.filter((source) => source.id !== torrentId)
-    })
-
-    if (savedConfig) {
-      void refreshBrowserState()
-      setErrorMessage(null)
-      setInfoMessage('Torrent source removed.')
-    }
-  }
-
   const handleGetStarted = async (): Promise<void> => {
     const savedConfig = await persistConfig(
       { romsDirectory: config.romsDirectory.trim() },
@@ -312,7 +277,7 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
 
       {!hasConnection ? (
         <Button
-          className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+          className="h-auto w-full items-center justify-center rounded-xl border-2 border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
           onPress={openConnectionModal}
           variant="tertiary"
         >
@@ -363,7 +328,7 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
 
       {!hasIgdbConnection ? (
         <Button
-          className="h-auto w-full items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+          className="h-auto w-full items-center justify-center rounded-xl border-2 border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
           onPress={openIgdbModal}
           variant="tertiary"
         >
@@ -409,93 +374,52 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
         </Card>
       )}
 
-      <Card className="bg-white/5">
-        <Card.Content className="grid gap-4 p-4">
-          <div className="grid gap-1">
-            <strong className="text-zinc-100">Torrent test sources</strong>
-            <p className="text-sm text-zinc-400">
-              Add a magnet link or a .torrent file. The torrent test screen will inspect
-              Minerva_Myrient releases and let you download single files only.
-            </p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
-            <label className="grid gap-1">
-              <span className="text-sm text-zinc-300">Magnet link</span>
-              <Input
-                className="rounded-xl bg-black/20 px-3 py-2 text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                onChange={(event) => setMagnetInput(event.target.value)}
-                onClick={handleTextInputClick}
-                placeholder="magnet:?xt=urn:btih:..."
-                value={magnetInput}
-              />
-            </label>
-            <Button
-              onPress={() => {
-                void handleAddTorrentSource('magnet', magnetInput)
-              }}
-              variant="primary"
-            >
-              <FontAwesomeIcon icon={faLink} />
-              Add magnet
-            </Button>
-            <Button
-              onPress={() => {
-                void handlePickTorrentFile()
-              }}
-              variant="tertiary"
-            >
-              <FontAwesomeIcon icon={faFolder} />
-              Add .torrent file
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-zinc-400">
-              {config.torrentSources.length} torrent source
-              {config.torrentSources.length === 1 ? '' : 's'} configured
-            </span>
-            <Button onPress={() => navigate('/torrents')} variant="tertiary">
-              Open torrent test screen
-            </Button>
-          </div>
-
-          {config.torrentSources.length > 0 ? (
-            <div className="grid gap-3">
-              {config.torrentSources.map((source) => (
-                <div
-                  className="grid gap-3 rounded-xl bg-black/20 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-                  key={source.id}
-                >
-                  <div className="min-w-0">
-                    <strong className="block truncate text-zinc-100">
-                      {browserSnapshot.resolvedNames[source.id] ??
-                        source.resolvedName ??
-                        source.label}
-                    </strong>
-                    <span className="block truncate text-xs uppercase tracking-[0.18em] text-zinc-400">
-                      {source.sourceType}
-                    </span>
-                    <p className="truncate text-xs text-zinc-500">{source.source}</p>
-                  </div>
-                  <Button
-                    className="px-3"
-                    onPress={() => {
-                      void handleDeleteTorrentSource(source.id)
-                    }}
-                    variant="danger"
-                  >
-                    <FontAwesomeIcon icon={faTrashCan} />
-                    Remove
-                  </Button>
-                </div>
-              ))}
+      {config.torrentSources.length === 0 ? (
+        <Button
+          className="h-auto w-full items-center justify-center rounded-xl border-2 border-dashed border-white/20 bg-white/5 px-4 py-6 text-center"
+          isDisabled={isTorrentPicking}
+          onPress={() => void handlePickTorrentFile()}
+          variant="tertiary"
+        >
+          <FontAwesomeIcon className="text-zinc-400" icon={faPlus} />
+          <span className="text-zinc-400">
+            {isTorrentPicking ? 'Picking...' : 'Add Torrent Sources'}
+          </span>
+        </Button>
+      ) : (
+        <Card className="bg-white/5">
+          <Card.Content className="grid gap-3 p-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-white/10 text-zinc-100">
+                <FontAwesomeIcon icon={faSkullCrossbones} />
+              </div>
+              <div className="min-w-0">
+                <strong className="block truncate text-base text-zinc-100">Torrent</strong>
+                <span className="block text-xs text-zinc-400">
+                  {config.torrentSources.length} source
+                  {config.torrentSources.length === 1 ? '' : 's'} ·{' '}
+                  {config.torrentUploadMode === 'always'
+                    ? 'Upload always'
+                    : config.torrentUploadMode === 'never'
+                      ? 'Upload never'
+                      : 'Upload when downloading'}
+                </span>
+              </div>
             </div>
-          ) : (
-            <p className="text-sm text-zinc-500">No torrent sources added yet.</p>
-          )}
-        </Card.Content>
-      </Card>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                aria-label="Edit torrent settings"
+                className="px-3"
+                onPress={() => setShowTorrentModal(true)}
+                variant="tertiary"
+              >
+                <FontAwesomeIcon icon={faPenToSquare} />
+                Edit
+              </Button>
+            </div>
+          </Card.Content>
+        </Card>
+      )}
 
       <div className="flex items-center justify-end">
         <div className="grid gap-3 justify-items-end">
@@ -505,15 +429,6 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
               onChange={(mode) => {
                 updateConfig({ inputKeyboardMode: mode })
                 void persistConfig({ inputKeyboardMode: mode })
-              }}
-            />
-          </label>
-          <label className="grid gap-1">
-            <TorrentUploadModeSelect
-              value={config.torrentUploadMode}
-              onChange={(mode) => {
-                updateConfig({ torrentUploadMode: mode })
-                void persistConfig({ torrentUploadMode: mode })
               }}
             />
           </label>
@@ -598,6 +513,8 @@ export const SetupScreen = ({ onboardingMode = false }: SetupScreenProps): React
 
       <SetupConnectionModal isOpen={showConnectionModal} onClose={closeConnectionModal} />
 
+      <SetupTorrentModal isOpen={showTorrentModal} onClose={() => setShowTorrentModal(false)} />
+
       <SetupDeleteConfirmModal
         isOpen={showDeleteConnectionModal}
         title="Delete Connection"
@@ -649,11 +566,6 @@ interface KeyboardModeSelectProps {
   onChange: (mode: InputKeyboardMode) => void
 }
 
-interface TorrentUploadModeSelectProps {
-  value: TorrentUploadMode
-  onChange: (mode: TorrentUploadMode) => void
-}
-
 const ControllerlessKeyboardModeSelect = ({
   value,
   onChange
@@ -681,56 +593,6 @@ const ControllerlessKeyboardModeSelect = ({
           </ListBox.Item>
           <ListBox.Item id="gamepad" textValue="When entered with gamepad">
             When entered with gamepad
-            <ListBox.ItemIndicator />
-          </ListBox.Item>
-        </ListBox>
-      </Select.Popover>
-    </Select>
-  )
-}
-
-const TorrentUploadModeSelect = ({
-  value,
-  onChange
-}: TorrentUploadModeSelectProps): React.JSX.Element => {
-  return (
-    <Select
-      className="w-fit"
-      aria-label="Torrent upload mode"
-      selectedKey={value}
-      onSelectionChange={(selection) => {
-        const selected = String(selection)
-
-        if (selected === 'always') {
-          onChange('always')
-          return
-        }
-
-        if (selected === 'never') {
-          onChange('never')
-          return
-        }
-
-        onChange('when_downloading')
-      }}
-    >
-      <Label>Torrent uploading</Label>
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
-          <ListBox.Item id="always" textValue="Always">
-            Always
-            <ListBox.ItemIndicator />
-          </ListBox.Item>
-          <ListBox.Item id="when_downloading" textValue="When downloading">
-            When downloading
-            <ListBox.ItemIndicator />
-          </ListBox.Item>
-          <ListBox.Item id="never" textValue="Never">
-            Never
             <ListBox.ItemIndicator />
           </ListBox.Item>
         </ListBox>

@@ -23,7 +23,7 @@ const api = {
   openOnScreenKeyboard: () =>
     ipcRenderer.invoke('system:open-onscreen-keyboard') as Promise<boolean>,
   pickDirectory: () => ipcRenderer.invoke('app:pick-directory') as Promise<string | null>,
-  pickTorrentFile: () => ipcRenderer.invoke('app:pick-torrent-file') as Promise<string | null>,
+  pickTorrentFile: () => ipcRenderer.invoke('app:pick-torrent-file') as Promise<string[] | null>,
   pickConfigFile: () => ipcRenderer.invoke('app:pick-config-file') as Promise<string | null>,
   loadConfigFromFile: (filePath: string) =>
     ipcRenderer.invoke('app:load-config-from-file', filePath) as Promise<AppConfig>,

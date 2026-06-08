@@ -22,7 +22,7 @@ declare global {
       saveConfig: (config: AppConfig) => Promise<AppConfig>
       openOnScreenKeyboard: () => Promise<boolean>
       pickDirectory: () => Promise<string | null>
-      pickTorrentFile: () => Promise<string | null>
+      pickTorrentFile: () => Promise<string[] | null>
       pickConfigFile: () => Promise<string | null>
       loadConfigFromFile: (filePath: string) => Promise<AppConfig>
       testFileServiceConnection: (config: AppConfig) => Promise<boolean>
